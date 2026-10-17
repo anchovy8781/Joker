@@ -84,6 +84,7 @@ def my_trades(user: User = Depends(require_user), db: Session = Depends(get_db),
             id=t.id, trade_uid=t.trade_uid, asset_id=t.asset_id, quantity=t.quantity,
             execution_price=t.execution_price, taker_side=t.taker_side, executed_at=t.executed_at,
             side="buy" if is_buyer else "sell", fee=t.buyer_fee if is_buyer else t.seller_fee,
+            fee_waived=(not is_buyer) and t.seller_fee_waived,
             realized_pnl=None if is_buyer else t.seller_realized_pnl.quantize(Decimal("0.01")),
             symbol=symbol,
         ))

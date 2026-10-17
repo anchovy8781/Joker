@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.models import Channel, MarketAsset, Order, Trade
 from app.schemas import AssetOut, ChannelOut, FreshnessOut, OrderOut
 from app.security import utcnow
+from app.services.fees import fee_policy
 
 
 def freshness(channel: Channel) -> FreshnessOut:
@@ -22,19 +23,22 @@ def freshness(channel: Channel) -> FreshnessOut:
                         stale_after_hours=s.stale_after_hours)
 
 
-def activity_24h(db: Session, asset_ids: list[int]) -> dict[int, tuple[int, int]]:
+def activity_24h(db: Session, asset_ids: list[int]) -> dict[int, tuple[int, int, int]]:
+    """asset_id -> (volume, trade count, turnover) over the last 24h."""
     if not asset_ids:
         return {}
     since = utcnow() - timedelta(hours=24)
     rows = db.execute(
-        select(Trade.asset_id, func.coalesce(func.sum(Trade.quantity), 0), func.count(Trade.id))
+        select(Trade.asset_id, func.coalesce(func.sum(Trade.quantity), 0), func.count(Trade.id),
+               func.coalesce(func.sum(Trade.quantity * Trade.execution_price), 0))
         .where(Trade.asset_id.in_(asset_ids), Trade.executed_at >= since)
         .group_by(Trade.asset_id)
     ).all()
-    return {a: (int(v), int(n)) for a, v, n in rows}
+    return {a: (int(v), int(n), int(t)) for a, v, n, t in rows}
 
 
-def asset_out(asset: MarketAsset, channel: Channel, act: tuple[int, int] = (0, 0)) -> AssetOut:
+def asset_out(asset: MarketAsset, channel: Channel, act: tuple[int, int, int] = (0, 0, 0)) -> AssetOut:
+    policy = fee_policy(asset, utcnow())
     change = asset.current_price - asset.previous_price
     return AssetOut(
         id=asset.id,
@@ -52,6 +56,11 @@ def asset_out(asset: MarketAsset, channel: Channel, act: tuple[int, int] = (0, 0
         last_trade_at=asset.last_trade_at,
         volume_24h=act[0],
         trades_24h=act[1],
+        turnover_24h=act[2],
+        market_cap=asset.current_price * asset.shares_outstanding,
+        fee_bps=policy.bps,
+        fee_surcharge_reason=policy.reason,
+        fee_surcharge_until=policy.until,
         freshness=freshness(channel),
         is_demo=channel.data_source == "demo",
     )
@@ -61,7 +70,7 @@ def order_out(o: Order) -> OrderOut:
     return OrderOut(
         id=o.id, asset_id=o.asset_id, side=o.side, order_type=o.order_type, quantity=o.quantity,
         remaining_quantity=o.remaining_quantity, filled_quantity=o.quantity - o.remaining_quantity,
-        limit_price=o.limit_price, reserved_cash=o.reserved_cash, status=o.status,
+        limit_price=o.limit_price, reserved_cash=o.reserved_cash, fee_bps=o.fee_bps, status=o.status,
         status_reason=o.status_reason, idempotency_key=o.idempotency_key, created_at=o.created_at,
         updated_at=o.updated_at,
     )

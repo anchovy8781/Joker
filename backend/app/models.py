@@ -104,7 +104,7 @@ class LedgerEntry(Base):
         CheckConstraint("amount <> 0", name="ck_ledger_amount_nonzero"),
         CheckConstraint(
             "entry_type IN ('signup_grant','trade_buy','trade_sell','trade_fee',"
-            "'admin_adjustment','correction')",
+            "'admin_adjustment','correction','mission_reward')",
             name="ck_ledger_entry_type",
         ),
         Index(
@@ -160,6 +160,8 @@ class Channel(Base):
     hidden_subscriber_count: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    request_note: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = _now()
 
 
@@ -184,6 +186,9 @@ class MarketAsset(Base):
     halt_reason: Mapped[str | None] = mapped_column(String(200))
     price_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_trade_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Surcharge fee windows: newly listed celebrity channel / recent new video upload.
+    celebrity_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    new_video_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_at: Mapped[datetime] = _now()
 
@@ -221,6 +226,7 @@ class Order(Base):
             name="ck_orders_limit_required",
         ),
         CheckConstraint("reserved_cash >= 0", name="ck_orders_reserved_cash"),
+        CheckConstraint("fee_bps >= 0 AND fee_bps <= 1000", name="ck_orders_fee_bps"),
         CheckConstraint(
             "status IN ('open','partially_filled','filled','canceled','rejected')",
             name="ck_orders_status",
@@ -239,6 +245,8 @@ class Order(Base):
     remaining_quantity: Mapped[int] = mapped_column(BigInteger, nullable=False)
     limit_price: Mapped[int | None] = mapped_column(BigInteger)
     reserved_cash: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    # Fee rate fixed when the order is accepted; fills charge this rate.
+    fee_bps: Mapped[int] = mapped_column(Integer, nullable=False, server_default="20")
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     status_reason: Mapped[str | None] = mapped_column(String(200))
     idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -277,6 +285,7 @@ class Trade(Base):
     seller_fee: Mapped[int] = mapped_column(BigInteger, nullable=False)
     taker_side: Mapped[str] = mapped_column(String(4), nullable=False)
     seller_realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    seller_fee_waived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     executed_at: Mapped[datetime] = _now()
 
 
@@ -471,7 +480,8 @@ class Report(Base):
     __table_args__ = (
         CheckConstraint("status IN ('open','resolved','dismissed')", name="ck_reports_status"),
         CheckConstraint(
-            "target_type IN ('user','asset','channel','other')", name="ck_reports_target_type"
+            "target_type IN ('user','asset','channel','chat_message','other')",
+            name="ck_reports_target_type"
         ),
     )
 
@@ -510,3 +520,53 @@ class ApiQuotaUsage(Base):
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)
     usage_date: Mapped[date] = mapped_column(Date, primary_key=True)
     units_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        CheckConstraint("char_length(body) BETWEEN 1 AND 300", name="ck_chat_body_len"),
+        Index("ix_chat_room_id", "room", "id"),
+    )
+
+    id: Mapped[int] = _pk()
+    room: Mapped[str] = mapped_column(String(32), nullable=False)  # 'global' | 'asset:<id>'
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(String(300), nullable=False)
+    created_at: Mapped[datetime] = _now()
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    hidden_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    hidden_reason: Mapped[str | None] = mapped_column(String(300))
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (Index("ix_notifications_user_unread", "user_id", "read_at", "id"),)
+
+    id: Mapped[int] = _pk()
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(String(1000), nullable=False, server_default="")
+    link: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = _now()
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserMission(Base):
+    """One row per completed (and paid) mission per period. The UNIQUE constraint is what
+    makes a reward impossible to claim twice."""
+
+    __tablename__ = "user_missions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "mission_code", "period", name="uq_user_mission_period"),
+        CheckConstraint("reward > 0", name="ck_user_missions_reward"),
+    )
+
+    id: Mapped[int] = _pk()
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    mission_code: Mapped[str] = mapped_column(String(48), nullable=False)
+    period: Mapped[str] = mapped_column(String(16), nullable=False)  # 'once' or YYYY-MM-DD
+    reward: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ledger_entry_id: Mapped[int] = mapped_column(ForeignKey("ledger_entries.id"), nullable=False)
+    completed_at: Mapped[datetime] = _now()

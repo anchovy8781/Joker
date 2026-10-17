@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # Economy (all amounts are integer credits)
     signup_grant: int = 1_000_000
     fee_bps: int = 20  # 0.20%
+    # Surcharge fee for hot assets (new video upload / newly listed celebrity channel).
+    # Selling a surcharged asset at a loss pays no sell fee.
+    surcharge_fee_bps: int = 100  # 1.00%
+    new_video_surcharge_hours: int = 48
+    celebrity_surcharge_days: int = 30
     min_price: int = 100
     max_order_quantity: int = 100_000
 
@@ -58,6 +63,8 @@ class Settings(BaseSettings):
     rl_orders_per_user: tuple[int, int] = (60, 60)
     rl_orders_per_user_medium_risk: tuple[int, int] = (10, 60)
     rl_api_per_ip: tuple[int, int] = (600, 60)
+    rl_chat_per_user: tuple[int, int] = (10, 60)
+    rl_listing_requests_per_user: tuple[int, int] = (3, 86400)
 
     @property
     def is_production(self) -> bool:

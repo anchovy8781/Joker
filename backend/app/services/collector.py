@@ -13,10 +13,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Channel, MarketAsset, MarketEvent
+from app.models import Channel, ChannelMetric, MarketAsset, MarketEvent
 from app.security import utcnow
 from app.services.audit import write_audit
 from app.services.listing import auto_halt, auto_resume_if_safe, store_snapshot
+from app.services.notify import notify_holders
 from app.services.pricing import compute_features, is_stale
 from app.services.youtube import DemoProvider, ProviderError, YouTubeDataAPIProvider
 
@@ -68,6 +69,36 @@ def detect_events(db: Session, channel: Channel, asset: MarketAsset, day: date, 
                           {"view_g7": f.view_g7, "view_g7_prev": f.view_g7_prev, "view_g28w": f.view_g28w}):
                 created.append("sustained_view_decline")
     return created
+
+
+def detect_new_video(db: Session, channel: Channel, asset: MarketAsset, day: date, now: datetime) -> bool:
+    """A higher public video count than the previous collection day means a new upload.
+    That opens the surcharge-fee window for the asset."""
+    def latest(where):
+        return db.execute(
+            select(ChannelMetric.metric_value).where(
+                ChannelMetric.channel_id == channel.id, ChannelMetric.metric_type == "video_count",
+                ChannelMetric.source == channel.data_source, where,
+            ).order_by(ChannelMetric.observed_date.desc()).limit(1)
+        ).scalar()
+
+    today = latest(ChannelMetric.observed_date == day)
+    before = latest(ChannelMetric.observed_date < day)
+    if today is None or before is None or today <= before:
+        return False
+    until = now + timedelta(hours=get_settings().new_video_surcharge_hours)
+    if asset.new_video_until is not None and asset.new_video_until >= until:
+        return False
+    first_open = asset.new_video_until is None or asset.new_video_until <= now
+    asset.new_video_until = until
+    asset.version += 1
+    write_audit(db, "asset.fee_surcharge_new_video", target_type="asset", target_id=asset.id,
+                metadata={"video_count_before": before, "video_count_now": today, "until": until.isoformat()})
+    if first_open:
+        notify_holders(db, asset.id, "new_video", f"{asset.symbol} 신규 영상 업로드",
+                       f"신규 영상이 감지되어 {get_settings().new_video_surcharge_hours}시간 동안 할증 수수료가 "
+                       "적용됩니다 (손실 매도 시 매도 수수료 면제).", f"/assets/{asset.id}")
+    return True
 
 
 def collect_all(db: Session, now: datetime | None = None,
@@ -134,6 +165,8 @@ def collect_all(db: Session, now: datetime | None = None,
             trending = (demo.is_trending(ch.youtube_channel_id, day) if ch.data_source == "demo"
                         else ch.youtube_channel_id in trending_api)
             result["events"] += len(detect_events(db, ch, asset, day, now, trending))
+            if detect_new_video(db, ch, asset, day, now):
+                result.setdefault("new_videos", []).append(asset.symbol)
 
     write_audit(db, "data.collect", metadata={k: v for k, v in result.items()})
     db.flush()

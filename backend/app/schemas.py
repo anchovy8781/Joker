@@ -78,6 +78,11 @@ class AssetOut(BaseModel):
     last_trade_at: datetime | None
     volume_24h: int
     trades_24h: int
+    turnover_24h: int  # 거래대금 (sum of quantity × price, 24h)
+    market_cap: int  # 시가총액 (current price × shares outstanding)
+    fee_bps: int  # fee rate a new order would get right now
+    fee_surcharge_reason: str | None  # 'new_video' | 'celebrity_new_channel'
+    fee_surcharge_until: datetime | None
     freshness: FreshnessOut
     is_demo: bool
 
@@ -124,6 +129,7 @@ class TradeOut(Out):
 class MyTradeOut(TradeOut):
     side: Literal["buy", "sell"]
     fee: int
+    fee_waived: bool = False
     realized_pnl: Decimal | None
     symbol: str
 
@@ -148,6 +154,7 @@ class OrderOut(Out):
     filled_quantity: int
     limit_price: int | None
     reserved_cash: int
+    fee_bps: int
     status: str
     status_reason: str | None
     idempotency_key: str
@@ -214,7 +221,7 @@ class LeaderboardRow(BaseModel):
 
 # ---------------------------------------------------------------- user reports / appeals
 class ReportIn(Strict):
-    target_type: Literal["user", "asset", "channel", "other"]
+    target_type: Literal["user", "asset", "channel", "chat_message", "other"]
     target_id: str | None = Field(default=None, max_length=64)
     reason: str = Field(min_length=5, max_length=1000)
 
@@ -225,6 +232,20 @@ class AppealIn(Strict):
 
 
 # ---------------------------------------------------------------- admin
+class ChatIn(Strict):
+    body: str = Field(min_length=1, max_length=1000)
+
+
+class ListingRequestIn(Strict):
+    channel: str = Field(min_length=3, max_length=200)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class MarkReadIn(Strict):
+    ids: list[int] | None = Field(default=None, max_length=500)
+    all: bool = False
+
+
 class ReasonIn(Strict):
     reason: str = Field(min_length=3, max_length=500)
 
@@ -241,6 +262,7 @@ class ListingApproveIn(Strict):
     initial_price: int = Field(ge=100, le=10_000_000)
     shares_outstanding: int = Field(ge=1_000, le=1_000_000_000)
     reason: str = Field(min_length=3, max_length=500)
+    celebrity_new_channel: bool = False
 
 
 class RiskReviewIn(Strict):

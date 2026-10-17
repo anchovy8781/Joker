@@ -25,7 +25,7 @@ from app.services.listing import approve_listing, get_market_maker, register_cha
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TABLES = [
-    "trades", "ledger_entries", "audit_logs", "orders", "positions", "accounts", "sessions",
+    "user_missions", "notifications", "chat_messages", "trades", "ledger_entries", "audit_logs", "orders", "positions", "accounts", "sessions",
     "market_bars", "channel_metrics", "market_events", "price_updates", "risk_events", "appeals",
     "reports", "announcements", "jobs", "rate_limits", "reconciliation_runs", "api_quota_usage",
     "market_assets", "channels", "users",
@@ -138,11 +138,27 @@ def make_admin(app, db):
     return _make
 
 
-def list_demo_asset(db, symbol="DTEST", price=10_000, shares=1_000_000, with_mm_quotes=True) -> int:
+def admin_id(db) -> int:
+    """An administrator for listing decisions made directly through the service layer."""
+    from app.models import Account
+
+    u = db.execute(select(User).where(User.normalized_username == "fixture_admin")).scalar_one_or_none()
+    if u is None:
+        u = User(username="fixture_admin", normalized_username="fixture_admin", role="admin",
+                 password_hash=None, verification_status="verified")
+        db.add(u)
+        db.flush()
+        db.add(Account(user_id=u.id, cash_balance=0, reserved_cash=0))
+        db.flush()
+    return u.id
+
+
+def list_demo_asset(db, symbol="DTEST", price=10_000, shares=1_000_000, with_mm_quotes=True,
+                    celebrity=False) -> int:
     ch = register_channel(db, youtube_channel_id=f"DEMO_{symbol.lower()}", title=f"[DEMO] {symbol}",
                           data_source="demo", category=None, actor_id=None)
     asset = approve_listing(db, channel_id=ch.id, symbol=symbol, initial_price=price,
-                            shares_outstanding=shares, actor_id=None)
+                            shares_outstanding=shares, actor_id=admin_id(db), celebrity_new_channel=celebrity)
     if not with_mm_quotes:
         from app.services.orders import cancel_all_for_asset
 

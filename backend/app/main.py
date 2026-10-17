@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from app.api import account, admin, auth, market, orders
+from app.api import account, admin, auth, market, orders, social
 from app.config import get_settings
 from app.errors import AppError, install_error_handlers
 from app.security import client_ip, hit_rate_limit, ip_hash
@@ -72,7 +72,7 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "X-CSRF-Token", "X-Requested-With", "X-Request-ID"],
     )
 
-    for r in (auth.router, market.router, account.router, orders.router, admin.router):
+    for r in (auth.router, market.router, account.router, orders.router, social.router, admin.router):
         app.include_router(r)
 
     @app.get("/healthz")

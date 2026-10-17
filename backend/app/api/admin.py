@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.serialize import freshness
 from app.db import get_db, run_in_transaction
@@ -17,6 +17,7 @@ from app.models import (
     Appeal,
     AuditLog,
     Channel,
+    ChatMessage,
     Job,
     LedgerEntry,
     MarketAsset,
@@ -37,7 +38,7 @@ from app.schemas import (
     UserStatusIn,
 )
 from app.security import require_admin, utcnow
-from app.services import jobs, listing, reconciliation, risk
+from app.services import chat, jobs, listing, reconciliation, risk
 from app.services.audit import write_audit
 from app.services.ledger import lock_account, post_entry
 
@@ -113,17 +114,23 @@ def resume(asset_id: int, body: ReasonIn, request: Request, admin: User = Depend
 @router.get("/channels")
 def channels(admin: User = Depends(require_admin), db: Session = Depends(get_db),
              listing_status: Literal["pending", "listed", "rejected", "delisted"] | None = None):
-    q = select(Channel, MarketAsset).outerjoin(MarketAsset, MarketAsset.channel_id == Channel.id)
+    requester = aliased(User)
+    q = (select(Channel, MarketAsset, requester.username)
+         .outerjoin(MarketAsset, MarketAsset.channel_id == Channel.id)
+         .outerjoin(requester, requester.id == Channel.requested_by))
     if listing_status:
         q = q.where(Channel.listing_status == listing_status)
     return [{"id": c.id, "youtube_channel_id": c.youtube_channel_id, "title": c.title,
              "data_source": c.data_source, "listing_status": c.listing_status,
              "data_quality_status": c.data_quality_status, "freshness": freshness(c).model_dump(),
+             "requested_by": req_name, "request_note": c.request_note,
              "asset": None if a is None else {"id": a.id, "symbol": a.symbol,
                                                "trading_status": a.trading_status,
                                                "halt_reason": a.halt_reason,
-                                               "reference_price": a.reference_price}}
-            for c, a in db.execute(q.order_by(Channel.id)).all()]
+                                               "reference_price": a.reference_price,
+                                               "celebrity_until": a.celebrity_until,
+                                               "new_video_until": a.new_video_until}}
+            for c, a, req_name in db.execute(q.order_by(Channel.id)).all()]
 
 
 @router.post("/channels", status_code=201)
@@ -142,7 +149,8 @@ def approve(channel_id: int, body: ListingApproveIn, request: Request,
         a = listing.approve_listing(s, channel_id=channel_id, symbol=body.symbol,
                                     initial_price=body.initial_price,
                                     shares_outstanding=body.shares_outstanding, actor_id=admin.id,
-                                    request_id=_rid(request))
+                                    request_id=_rid(request),
+                                    celebrity_new_channel=body.celebrity_new_channel)
         write_audit(s, "listing.approve_reason", actor_id=admin.id, target_type="asset", target_id=a.id,
                     request_id=_rid(request), metadata={"reason": body.reason})
         return a
@@ -317,3 +325,23 @@ def resolve_appeal(appeal_id: int, body: ResolveIn, request: Request, admin: Use
                 request_id=_rid(request), metadata={"status": body.status, "resolution": body.resolution})
     db.commit()
     return {"id": a.id, "status": a.status}
+
+
+@router.get("/chat")
+def chat_moderation(admin: User = Depends(require_admin), db: Session = Depends(get_db),
+                    room: str | None = Query(default=None, max_length=32),
+                    limit: int = Query(default=100, ge=1, le=500)):
+    q = select(ChatMessage, User.username).join(User, User.id == ChatMessage.user_id)
+    if room:
+        q = q.where(ChatMessage.room == room)
+    return [{"id": m.id, "room": m.room, "user_id": m.user_id, "username": name, "body": m.body,
+             "created_at": m.created_at, "hidden_at": m.hidden_at, "hidden_reason": m.hidden_reason}
+            for m, name in db.execute(q.order_by(ChatMessage.id.desc()).limit(limit)).all()]
+
+
+@router.post("/chat/{message_id}/hide")
+def hide_chat(message_id: int, body: ReasonIn, request: Request, admin: User = Depends(require_admin),
+              db: Session = Depends(get_db)):
+    msg = chat.hide_message(db, message_id, admin.id, body.reason, _rid(request))
+    db.commit()
+    return {"id": msg.id, "hidden": msg.hidden_at is not None}

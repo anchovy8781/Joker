@@ -1,8 +1,10 @@
 """Management commands: `python -m app.cli <command>`.
 
   create-admin <username>         prompts for a password (admins are never created via the API)
-  seed-demo                       registers + lists clearly-labelled DEMO channels
-  add-channel <UC...> <SYMBOL> <price> <shares> [title]   register + list a real channel (needs API key)
+  seed-demo [--approve-by <admin>] registers clearly-labelled DEMO channels (pending until approved)
+  add-channel <UC...> [title]     registers a real channel as pending + collects its data (needs API key)
+  approve <channel_id> <SYMBOL> <price> <shares> --admin <name> [--celebrity]
+                                  approve a pending listing as that admin (every listing needs approval)
   run <job>                       run one job now: collect_data | price_update | reconcile | risk_scan | mm_requote
   reconcile                       print a reconciliation report
 """
@@ -49,21 +51,37 @@ def create_admin(username: str) -> None:
     print(f"admin {username} created (id={u.id})")
 
 
-def seed_demo() -> None:
+def _admin(db, username: str) -> User:
+    u = db.execute(select(User).where(User.normalized_username == normalize_username(username))).scalar_one_or_none()
+    if u is None or u.role != "admin":
+        sys.exit(f"'{username}' is not an administrator (create one with create-admin)")
+    return u
+
+
+def seed_demo(approve_by: str | None) -> None:
+    """Registers DEMO channels as pending. Listing still needs an admin decision: either in
+    the admin UI, or here with --approve-by <admin> (recorded under that admin's id)."""
     db = session_factory()()
+    admin = _admin(db, approve_by) if approve_by else None
     for cid, title, symbol, price, cat in DEMO_CHANNELS:
-        if db.execute(select(Channel.id).where(Channel.youtube_channel_id == cid)).first():
-            print(f"skip {symbol}: exists")
-            continue
-        ch = register_channel(db, youtube_channel_id=cid, title=title, data_source="demo",
-                              category=cat, actor_id=None, request_id="cli-seed")
-        approve_listing(db, channel_id=ch.id, symbol=symbol, initial_price=price,
-                        shares_outstanding=1_000_000, actor_id=None, request_id="cli-seed")
-        db.commit()
-        print(f"listed {symbol} ({title}) @ {price}")
+        ch = db.execute(select(Channel).where(Channel.youtube_channel_id == cid)).scalar_one_or_none()
+        if ch is None:
+            ch = register_channel(db, youtube_channel_id=cid, title=title, data_source="demo",
+                                  category=cat, actor_id=admin.id if admin else None, request_id="cli-seed")
+            db.commit()
+            print(f"registered {title} (pending)")
+        if admin and ch.listing_status == "pending":
+            approve_listing(db, channel_id=ch.id, symbol=symbol, initial_price=price,
+                            shares_outstanding=1_000_000, actor_id=admin.id, request_id="cli-seed")
+            db.commit()
+            print(f"approved {symbol} @ {price} by {admin.username}")
+    if not admin:
+        print("Channels are pending approval: approve them in the admin page (/admin) "
+              "or rerun with --approve-by <admin>.")
 
 
-def add_channel(channel_id: str, symbol: str, price: str, shares: str, title: str | None) -> None:
+def add_channel(channel_id: str, title: str | None) -> None:
+    """Register a real channel (pending) and collect its data so an admin can review it."""
     from app.services.collector import collect_all
     from app.services.youtube import get_api_provider
 
@@ -78,11 +96,27 @@ def add_channel(channel_id: str, symbol: str, price: str, shares: str, title: st
     db.commit()
     db.refresh(ch)
     if ch.data_quality_status == "unavailable" or ch.last_data_update_at is None:
-        sys.exit("channel data could not be verified; not listing")
-    a = approve_listing(db, channel_id=ch.id, symbol=symbol, initial_price=int(price),
-                        shares_outstanding=int(shares), actor_id=None, request_id="cli")
+        sys.exit("channel data could not be verified")
+    print(f"registered '{ch.title}' (channel id {ch.id}) as PENDING — approve it in /admin "
+          f"or: python -m app.cli approve {ch.id} SYMBOL PRICE SHARES --admin <name> [--celebrity]")
+
+
+def approve(args: list[str]) -> None:
+    flags = [a for a in args if a.startswith("--")]
+    pos = [a for a in args if not a.startswith("--")]
+    admin_name = None
+    if "--admin" in args:
+        admin_name = args[args.index("--admin") + 1]
+        pos.remove(admin_name)
+    if len(pos) != 4 or not admin_name:
+        sys.exit("usage: approve <channel_id> <SYMBOL> <price> <shares> --admin <name> [--celebrity]")
+    db = session_factory()()
+    admin = _admin(db, admin_name)
+    a = approve_listing(db, channel_id=int(pos[0]), symbol=pos[1], initial_price=int(pos[2]),
+                        shares_outstanding=int(pos[3]), actor_id=admin.id, request_id="cli",
+                        celebrity_new_channel="--celebrity" in flags)
     db.commit()
-    print(f"listed {a.symbol} for {ch.title} (status={a.trading_status})")
+    print(f"approved {a.symbol} (status={a.trading_status}, celebrity_surcharge={a.celebrity_until is not None})")
 
 
 def run_job(job_type: str) -> None:
@@ -109,9 +143,11 @@ def main(argv: list[str]) -> None:
     if cmd == "create-admin" and len(args) == 1:
         create_admin(args[0])
     elif cmd == "seed-demo":
-        seed_demo()
-    elif cmd == "add-channel" and len(args) >= 4:
-        add_channel(args[0], args[1], args[2], args[3], " ".join(args[4:]) or None)
+        seed_demo(args[args.index("--approve-by") + 1] if "--approve-by" in args else None)
+    elif cmd == "add-channel" and len(args) >= 1:
+        add_channel(args[0], " ".join(args[1:]) or None)
+    elif cmd == "approve":
+        approve(args)
     elif cmd == "run" and len(args) == 1:
         run_job(args[0])
     elif cmd == "reconcile":

@@ -22,6 +22,7 @@ from app.security import utcnow
 from app.services import bars
 from app.services.audit import write_audit
 from app.services.fees import bps_down, bps_up, buy_reservation
+from app.services.notify import notify, notify_holders
 from app.services.orders import OrderRequest, cancel_all_for_asset, lock_asset, place_order
 from app.services.youtube import ChannelSnapshot, DemoProvider
 
@@ -47,6 +48,7 @@ def get_market_maker(db: Session) -> User:
 def register_channel(
     db: Session, *, youtube_channel_id: str, title: str, data_source: str,
     category: str | None, actor_id: int | None, request_id: str | None = None,
+    requested_by: int | None = None, request_note: str | None = None,
 ) -> Channel:
     if data_source == "youtube_api" and not CHANNEL_ID_RE.match(youtube_channel_id):
         raise AppError(422, "INVALID_CHANNEL_ID", "YouTube channel IDs look like UC + 22 characters")
@@ -55,12 +57,14 @@ def register_channel(
     if db.execute(select(Channel.id).where(Channel.youtube_channel_id == youtube_channel_id)).first():
         raise AppError(409, "CHANNEL_EXISTS", "This channel is already registered")
     ch = Channel(youtube_channel_id=youtube_channel_id, title=title[:200], data_source=data_source,
-                 category=category, listing_status="pending")
+                 category=category, listing_status="pending", requested_by=requested_by,
+                 request_note=request_note)
     db.add(ch)
     db.flush()
     write_audit(db, "channel.register", actor_id=actor_id, target_type="channel", target_id=ch.id,
                 request_id=request_id, metadata={"youtube_channel_id": youtube_channel_id,
-                                                 "data_source": data_source})
+                                                 "data_source": data_source,
+                                                 "requested_by": requested_by})
     return ch
 
 
@@ -101,9 +105,11 @@ def backfill_demo_history(db: Session, channel: Channel, days: int = 35, now: da
 
 def approve_listing(
     db: Session, *, channel_id: int, symbol: str, initial_price: int, shares_outstanding: int,
-    actor_id: int | None, request_id: str | None = None,
+    actor_id: int, request_id: str | None = None, celebrity_new_channel: bool = False,
 ) -> MarketAsset:
+    """Every listing is an explicit administrator decision (recorded with the admin's id)."""
     s = get_settings()
+    _require_admin(db, actor_id)
     channel = db.execute(select(Channel).where(Channel.id == channel_id).with_for_update()).scalar_one_or_none()
     if channel is None:
         raise AppError(404, "CHANNEL_NOT_FOUND", "Channel not found")
@@ -141,19 +147,35 @@ def approve_listing(
     write_audit(db, "asset.list", actor_id=actor_id, target_type="asset", target_id=asset.id,
                 request_id=request_id, metadata={"symbol": symbol, "initial_price": initial_price,
                                                  "ipo_shares_to_market_maker": shares_outstanding,
-                                                 "channel_id": channel.id})
+                                                 "channel_id": channel.id,
+                                                 "celebrity_new_channel": celebrity_new_channel})
+    if celebrity_new_channel:
+        asset.celebrity_until = now + timedelta(days=s.celebrity_surcharge_days)
+    if channel.requested_by:
+        notify(db, channel.requested_by, "listing_approved", f"상장 승인: {symbol}",
+               f"신청하신 채널 '{channel.title}'이(가) {symbol}(으)로 상장되었습니다.", f"/assets/{asset.id}")
     if asset.trading_status == "active":
         requote_market_maker(db, asset.id)
     return asset
 
 
+def _require_admin(db: Session, actor_id: int | None) -> None:
+    actor = db.get(User, actor_id) if actor_id is not None else None
+    if actor is None or actor.role != "admin":
+        raise AppError(403, "FORBIDDEN", "Listing decisions require an administrator")
+
+
 def reject_listing(db: Session, channel_id: int, reason: str, actor_id: int, request_id: str | None) -> Channel:
+    _require_admin(db, actor_id)
     channel = db.get(Channel, channel_id)
     if channel is None:
         raise AppError(404, "CHANNEL_NOT_FOUND", "Channel not found")
     if channel.listing_status != "pending":
         raise AppError(409, "INVALID_LISTING_STATE", f"Channel is {channel.listing_status}")
     channel.listing_status = "rejected"
+    if channel.requested_by:
+        notify(db, channel.requested_by, "listing_rejected", "상장 신청 거절",
+               f"'{channel.title}' 상장 신청이 거절되었습니다. 사유: {reason}", "/listings")
     write_audit(db, "channel.reject", actor_id=actor_id, target_type="channel", target_id=channel_id,
                 request_id=request_id, metadata={"reason": reason})
     return channel
@@ -167,6 +189,8 @@ def halt(db: Session, asset_id: int, reason: str, actor_id: int | None, request_
     asset.version += 1
     write_audit(db, "asset.halt", actor_id=actor_id, target_type="asset", target_id=asset_id,
                 request_id=request_id, metadata={"reason": reason, "before": before})
+    notify_holders(db, asset_id, "asset_halted", f"{asset.symbol} 거래 정지",
+                   f"보유 종목 {asset.symbol}의 거래가 정지되었습니다. 사유: {reason}", f"/assets/{asset_id}")
     return asset
 
 
@@ -197,6 +221,8 @@ def auto_halt(db: Session, asset: MarketAsset, code: str, detail: str) -> None:
     asset.version += 1
     write_audit(db, "asset.auto_halt", target_type="asset", target_id=asset.id,
                 metadata={"code": code, "detail": detail})
+    notify_holders(db, asset.id, "asset_halted", f"{asset.symbol} 자동 거래 정지",
+                   f"채널 데이터 문제로 거래가 정지되었습니다: {detail}", f"/assets/{asset.id}")
 
 
 def auto_resume_if_safe(db: Session, asset: MarketAsset) -> bool:

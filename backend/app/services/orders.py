@@ -23,8 +23,9 @@ from app.errors import AppError
 from app.models import Account, Channel, MarketAsset, Order, Position, Trade, User
 from app.security import utcnow
 from app.services import bars
-from app.services.fees import bps_down, bps_up, buy_reservation, fee_for
+from app.services.fees import bps_down, bps_up, buy_reservation, fee_for, fee_policy
 from app.services.ledger import lock_accounts, post_entry
+from app.services.notify import notify
 
 RESTING = ("open", "partially_filled")
 MAX_MATCH_DEPTH = 500  # resting orders examined (and locked) per incoming order
@@ -161,6 +162,8 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
         dev = s.market_order_max_deviation_bps
         protect = bps_up(ref, dev) if req.side == "buy" else max(1, bps_down(ref, dev))
     assert protect is not None
+    # Fee rate is fixed now (surcharge windows may open/close while the order rests).
+    fee_bps = fee_policy(asset, utcnow()).bps
 
     # ---- collect the resting orders we could match (price-time priority)
     opposite = "sell" if req.side == "buy" else "buy"
@@ -194,7 +197,7 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
     # ---- reserve funds / shares for the incoming order
     reserve_cash = 0
     if req.side == "buy":
-        reserve_cash = buy_reservation(req.quantity, protect)
+        reserve_cash = buy_reservation(req.quantity, protect, fee_bps)
         if account.cash_balance - account.reserved_cash < reserve_cash:
             raise AppError(
                 409,
@@ -224,6 +227,7 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
             remaining_quantity=req.quantity,
             limit_price=None,
             reserved_cash=0,
+            fee_bps=fee_bps,
             status="rejected",
             status_reason="SELF_TRADE_PREVENTED" if self_trade_blocked else "NO_LIQUIDITY",
             idempotency_key=req.idempotency_key,
@@ -242,6 +246,7 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
         remaining_quantity=req.quantity,
         limit_price=req.limit_price,
         reserved_cash=reserve_cash,
+        fee_bps=fee_bps,
         status="open",
         idempotency_key=req.idempotency_key,
         request_hash=req.digest(),
@@ -292,7 +297,25 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
         _release_remaining(db, order, accounts[user.id])
     order.updated_at = now
     db.flush()
+    _notify_fills(db, asset, order, trades)
     return PlaceResult(order=order, trades=trades)
+
+
+def _notify_fills(db: Session, asset: MarketAsset, taker: Order, trades: list[Trade]) -> None:
+    if not trades:
+        return
+    link = f"/assets/{asset.id}"
+    side = {"buy": "매수", "sell": "매도"}
+    filled = sum(t.quantity for t in trades)
+    avg = sum(t.quantity * t.execution_price for t in trades) // filled
+    notify(db, taker.user_id, "order_filled", f"{asset.symbol} {side[taker.side]} 체결",
+           f"{filled}주 체결 (평균 {avg:,} 크레딧) · 주문 #{taker.id}", link)
+    for t in trades:
+        maker_order_id = t.sell_order_id if taker.side == "buy" else t.buy_order_id
+        maker_user = t.seller_id if taker.side == "buy" else t.buyer_id
+        maker_side = "sell" if taker.side == "buy" else "buy"
+        notify(db, maker_user, "order_filled", f"{asset.symbol} {side[maker_side]} 체결",
+               f"{t.quantity}주 @ {t.execution_price:,} 크레딧 · 주문 #{maker_order_id}", link)
 
 
 def _execute(
@@ -307,8 +330,7 @@ def _execute(
     now,
 ) -> Trade:
     notional = qty * price
-    buyer_fee = fee_for(notional)
-    seller_fee = fee_for(notional)
+    buyer_fee = fee_for(notional, buy_order.fee_bps)
     buyer_acct = accounts[buy_order.user_id]
     seller_acct = accounts[sell_order.user_id]
 
@@ -321,6 +343,10 @@ def _execute(
 
     seller_pos = _get_position(db, sell_order.user_id, asset.id, create=False)
     assert seller_pos is not None
+    # Surcharged orders that sell at a loss (vs. average cost) pay no sell fee.
+    surcharged = sell_order.fee_bps > get_settings().fee_bps
+    waived = surcharged and Decimal(notional) < seller_pos.average_cost * qty
+    seller_fee = 0 if waived else fee_for(notional, sell_order.fee_bps)
     realized = Decimal(notional - seller_fee) - seller_pos.average_cost * qty
 
     trade = Trade(
@@ -336,6 +362,7 @@ def _execute(
         seller_fee=seller_fee,
         taker_side=taker_side,
         seller_realized_pnl=realized,
+        seller_fee_waived=waived,
         executed_at=now,
     )
     db.add(trade)
@@ -344,12 +371,14 @@ def _execute(
 
     post_entry(db, buyer_acct, entry_type="trade_buy", amount=-notional, transaction_id=txid,
                reference_type="trade", reference_id=trade.id)
-    post_entry(db, buyer_acct, entry_type="trade_fee", amount=-buyer_fee, transaction_id=txid,
-               reference_type="trade", reference_id=trade.id)
+    if buyer_fee:
+        post_entry(db, buyer_acct, entry_type="trade_fee", amount=-buyer_fee, transaction_id=txid,
+                   reference_type="trade", reference_id=trade.id)
     post_entry(db, seller_acct, entry_type="trade_sell", amount=notional, transaction_id=txid,
                reference_type="trade", reference_id=trade.id)
-    post_entry(db, seller_acct, entry_type="trade_fee", amount=-seller_fee, transaction_id=txid,
-               reference_type="trade", reference_id=trade.id)
+    if seller_fee:
+        post_entry(db, seller_acct, entry_type="trade_fee", amount=-seller_fee, transaction_id=txid,
+                   reference_type="trade", reference_id=trade.id)
 
     # Seller position
     seller_pos.reserved_quantity -= qty

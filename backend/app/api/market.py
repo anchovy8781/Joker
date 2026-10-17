@@ -44,7 +44,7 @@ def list_assets(
     q: str | None = Query(default=None, max_length=100),
     status: Literal["active", "halted"] | None = None,
     source: Literal["youtube_api", "demo"] | None = None,
-    sort: Literal["symbol", "change", "volume", "price"] = "symbol",
+    sort: Literal["symbol", "change", "volume", "price", "turnover", "market_cap"] = "symbol",
 ):
     stmt = _listed(db)
     if q:
@@ -56,13 +56,17 @@ def list_assets(
         stmt = stmt.where(Channel.data_source == source)
     rows = db.execute(stmt.order_by(MarketAsset.symbol)).all()
     act = activity_24h(db, [a.id for a, _ in rows])
-    out = [asset_out(a, c, act.get(a.id, (0, 0))) for a, c in rows]
+    out = [asset_out(a, c, act.get(a.id, (0, 0, 0))) for a, c in rows]
     if sort == "change":
         out.sort(key=lambda x: x.change_pct, reverse=True)
     elif sort == "volume":
         out.sort(key=lambda x: x.volume_24h, reverse=True)
     elif sort == "price":
         out.sort(key=lambda x: x.current_price, reverse=True)
+    elif sort == "turnover":
+        out.sort(key=lambda x: x.turnover_24h, reverse=True)
+    elif sort == "market_cap":
+        out.sort(key=lambda x: x.market_cap, reverse=True)
     return out
 
 
@@ -76,7 +80,7 @@ def _get_asset(db: Session, asset_id: int) -> tuple[MarketAsset, Channel]:
 @router.get("/assets/{asset_id}", response_model=AssetOut)
 def get_asset(asset_id: int, db: Session = Depends(get_db)):
     a, c = _get_asset(db, asset_id)
-    return asset_out(a, c, activity_24h(db, [a.id]).get(a.id, (0, 0)))
+    return asset_out(a, c, activity_24h(db, [a.id]).get(a.id, (0, 0, 0)))
 
 
 @router.get("/assets/{asset_id}/history", response_model=list[BarOut])
@@ -181,6 +185,75 @@ def market_summary(db: Session = Depends(get_db)):
         "last_data_update_at": max((a.channel.last_data_update_at for a in assets
                                     if a.channel.last_data_update_at), default=None),
     }
+
+
+RANK_KEYS = {
+    "turnover": (lambda a: a.turnover_24h, True),
+    "market_cap": (lambda a: a.market_cap, True),
+    "volume": (lambda a: a.volume_24h, True),
+    "gainers": (lambda a: a.change_pct, True),
+    "losers": (lambda a: a.change_pct, False),
+}
+
+
+@router.get("/rankings", response_model=list[AssetOut])
+def rankings(metric: Literal["turnover", "market_cap", "volume", "gainers", "losers"] = "turnover",
+             limit: int = Query(default=20, ge=1, le=100), db: Session = Depends(get_db)):
+    """Market rankings: 거래대금 / 시가총액 / 거래량 / 상승률 / 하락률."""
+    assets = list_assets(db=db, q=None, status=None, source=None, sort="symbol")
+    key, desc = RANK_KEYS[metric]
+    return sorted(assets, key=key, reverse=desc)[:limit]
+
+
+EXPERT_POOL = 30  # top users by total equity considered "초고수"
+EXPERT_MIN_TRADES = 5
+EXPERT_MIN_BUYERS = 2  # an asset is only shown when at least 2 experts net-bought it (k-anonymity)
+
+
+@router.get("/rankings/expert-picks")
+def expert_picks(days: int = Query(default=7, ge=1, le=30), limit: int = Query(default=20, ge=1, le=50),
+                 db: Session = Depends(get_db)):
+    """초고수 PICK: assets most net-bought by the top-equity users (with real trading history)
+    over the window. Only aggregates are returned; individual experts are never revealed."""
+    since = utcnow() - timedelta(days=days)
+    rows = db.execute(text(
+        """
+        WITH equity AS (
+            SELECT u.id, a.cash_balance + COALESCE(SUM(p.quantity * m.current_price), 0) AS eq
+            FROM users u JOIN accounts a ON a.user_id = u.id
+            LEFT JOIN positions p ON p.user_id = u.id AND p.quantity > 0
+            LEFT JOIN market_assets m ON m.id = p.asset_id
+            WHERE u.role = 'user' AND u.status = 'active'
+              AND (SELECT COUNT(*) FROM trades t WHERE t.buyer_id = u.id OR t.seller_id = u.id) >= :min_trades
+            GROUP BY u.id, a.cash_balance
+            ORDER BY eq DESC LIMIT :pool
+        ),
+        flows AS (
+            SELECT t.asset_id, e.id AS uid,
+                   SUM(CASE WHEN t.buyer_id = e.id THEN t.quantity * t.execution_price
+                            ELSE -t.quantity * t.execution_price END) AS net
+            FROM trades t JOIN equity e ON e.id IN (t.buyer_id, t.seller_id)
+            WHERE t.executed_at >= :since
+            GROUP BY t.asset_id, e.id
+        )
+        SELECT asset_id, COUNT(*) AS buyers, SUM(net) AS net_buy
+        FROM flows WHERE net > 0
+        GROUP BY asset_id HAVING COUNT(*) >= :min_buyers
+        ORDER BY buyers DESC, net_buy DESC LIMIT :limit
+        """
+    ), {"min_trades": EXPERT_MIN_TRADES, "pool": EXPERT_POOL, "since": since,
+        "min_buyers": EXPERT_MIN_BUYERS, "limit": limit}).all()
+    if not rows:
+        return []
+    ids = [r.asset_id for r in rows]
+    assets = {a.id: (a, c) for a, c in db.execute(_listed(db).where(MarketAsset.id.in_(ids))).all()}
+    act = activity_24h(db, ids)
+    out = []
+    for rank, r in enumerate((r for r in rows if r.asset_id in assets), start=1):
+        a, c = assets[r.asset_id]
+        out.append({"rank": rank, "expert_buyers": r.buyers, "net_buy_notional": int(r.net_buy),
+                    "asset": asset_out(a, c, act.get(a.id, (0, 0, 0)))})
+    return out
 
 
 @router.get("/leaderboard", response_model=list[LeaderboardRow])

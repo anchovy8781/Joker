@@ -62,12 +62,15 @@ def reconcile(db: Session) -> ReconciliationRun:
             mismatches.append({"check": "position_vs_trades", "user_id": uid, "asset_id": aid,
                                "quantity": qty, "net_trades": int(net)})
 
-    # 6) trade ledger consistency: each trade has 4 ledger rows summing to -(fees)
+    # 6) trade ledger consistency: buy + sell rows plus one row per non-zero fee,
+    #    summing to -(fees); a waived fee must really be zero.
     bad_trades = db.execute(text(
         "SELECT t.id FROM trades t LEFT JOIN ledger_entries l "
         "ON l.reference_type = 'trade' AND l.reference_id = t.id::text "
-        "GROUP BY t.id, t.buyer_fee, t.seller_fee "
-        "HAVING COUNT(l.id) <> 4 OR COALESCE(SUM(l.amount), 0) <> -(t.buyer_fee + t.seller_fee)"
+        "GROUP BY t.id, t.buyer_fee, t.seller_fee, t.seller_fee_waived "
+        "HAVING COUNT(l.id) <> 2 + (t.buyer_fee > 0)::int + (t.seller_fee > 0)::int "
+        "OR COALESCE(SUM(l.amount), 0) <> -(t.buyer_fee + t.seller_fee) "
+        "OR (t.seller_fee_waived AND t.seller_fee <> 0)"
     )).scalars().all()
     for tid in bad_trades:
         mismatches.append({"check": "trade_ledger", "trade_id": tid})

@@ -115,6 +115,12 @@ class YouTubeDataAPIProvider:
         missing = [c for c in channel_ids if c not in snapshots]
         return FetchResult(snapshots, missing)
 
+    def resolve_handle(self, handle: str) -> str | None:
+        """@handle -> channel ID via channels.list(forHandle) (1 quota unit)."""
+        data = self._get("channels", {"part": "id", "forHandle": handle}, 1)
+        items = data.get("items") or []
+        return items[0]["id"] if items else None
+
     def fetch_trending_channels(self, region: str) -> set[str]:
         data = self._get(
             "videos",

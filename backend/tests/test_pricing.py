@@ -12,7 +12,7 @@ from app.security import utcnow
 from app.services import collector, pricing
 from app.services.listing import approve_listing, register_channel
 from app.services.youtube import YouTubeDataAPIProvider
-from tests.conftest import give_shares, list_demo_asset
+from tests.conftest import admin_id, give_shares, list_demo_asset
 
 
 def _asset(db, aid):
@@ -158,7 +158,7 @@ def test_never_collected_real_channel_is_not_tradable(db, make_admin):
     ch = register_channel(db, youtube_channel_id="UC" + "a" * 22, title="Real channel",
                           data_source="youtube_api", category=None, actor_id=None)
     a = approve_listing(db, channel_id=ch.id, symbol="REAL", initial_price=5_000,
-                        shares_outstanding=100_000, actor_id=None)
+                        shares_outstanding=100_000, actor_id=admin_id(db))
     db.commit()
     assert a.trading_status == "halted" and "AWAITING_DATA" in a.halt_reason
     admin = make_admin()
@@ -208,7 +208,7 @@ def test_20_collection_failure_keeps_price_and_status_safe(make_user, db, asset)
     """API outage: last verified data kept with its original timestamp, prices unchanged."""
     ch = _api_channel(db)
     a = approve_listing(db, channel_id=ch.id, symbol="REALB", initial_price=7_000,
-                        shares_outstanding=100_000, actor_id=None)
+                        shares_outstanding=100_000, actor_id=admin_id(db))
     db.commit()
     ok = _mock_api(lambda r: httpx.Response(200, json={"items": [{
         "id": ch.youtube_channel_id, "snippet": {"title": "B"},
@@ -248,7 +248,7 @@ def test_20_collection_failure_keeps_price_and_status_safe(make_user, db, asset)
 def test_deleted_channel_marked_unavailable_and_halted(db):
     ch = _api_channel(db)
     a = approve_listing(db, channel_id=ch.id, symbol="GONE", initial_price=7_000,
-                        shares_outstanding=100_000, actor_id=None)
+                        shares_outstanding=100_000, actor_id=admin_id(db))
     db.commit()
     res = collector.collect_all(db, api=_mock_api(lambda r: httpx.Response(200, json={"items": []})))
     db.commit()
