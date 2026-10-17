@@ -13,9 +13,11 @@ export function AssetTable({ assets, compactMode = false }: { assets: Asset[]; c
             <th>종목</th>
             <th className="num">현재가</th>
             <th className="num">등락</th>
-            {!compactMode && <th className="num">24h 거래량</th>}
-            {!compactMode && <th>상태</th>}
-            {!compactMode && <th>데이터</th>}
+            {!compactMode && <th className="num hidden sm:table-cell">시가총액</th>}
+            {!compactMode && <th className="num hidden sm:table-cell">거래대금</th>}
+            {!compactMode && <th className="num">인기도</th>}
+            {!compactMode && <th className="hidden md:table-cell">상태</th>}
+            {!compactMode && <th className="hidden md:table-cell">데이터</th>}
           </tr>
         </thead>
         <tbody>
@@ -30,9 +32,11 @@ export function AssetTable({ assets, compactMode = false }: { assets: Asset[]; c
               </td>
               <td className="num">{credits(a.current_price)}</td>
               <td className="num"><Change percent={a.change_pct} /></td>
-              {!compactMode && <td className="num">{compact(a.volume_24h)}</td>}
-              {!compactMode && <td><TradingBadge status={a.trading_status} reason={a.halt_reason} /></td>}
-              {!compactMode && <td><FreshnessBadge f={a.freshness} /></td>}
+              {!compactMode && <td className="num hidden sm:table-cell">{compact(a.market_cap)}</td>}
+              {!compactMode && <td className="num hidden sm:table-cell">{compact(a.turnover_24h)}</td>}
+              {!compactMode && <td className="num">{a.popularity_score ?? "—"}{a.fee_bps > 20 && <span title="할증 수수료" aria-label="할증 수수료"> 🔥</span>}</td>}
+              {!compactMode && <td className="hidden md:table-cell"><TradingBadge status={a.trading_status} reason={a.halt_reason} /></td>}
+              {!compactMode && <td className="hidden md:table-cell"><FreshnessBadge f={a.freshness} /></td>}
             </tr>
           ))}
         </tbody>

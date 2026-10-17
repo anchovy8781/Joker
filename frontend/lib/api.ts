@@ -100,6 +100,12 @@ export type Asset = {
   last_trade_at: string | null;
   volume_24h: number;
   trades_24h: number;
+  turnover_24h: number;
+  market_cap: number;
+  popularity_score: number | null;
+  fee_bps: number;
+  fee_surcharge_reason: "new_video" | "celebrity_new_channel" | null;
+  fee_surcharge_until: string | null;
   freshness: Freshness;
   is_demo: boolean;
 };
@@ -108,7 +114,7 @@ export type Bar = { timestamp: string; open_price: number; high_price: number; l
 export type BookLevel = { price: number; quantity: number; orders: number };
 export type OrderBook = { asset_id: number; bids: BookLevel[]; asks: BookLevel[] };
 export type Trade = { id: number; asset_id: number; quantity: number; execution_price: number; taker_side: "buy" | "sell"; executed_at: string; symbol?: string };
-export type MyTrade = Trade & { side: "buy" | "sell"; fee: number; realized_pnl: string | null; symbol: string };
+export type MyTrade = Trade & { side: "buy" | "sell"; fee: number; fee_waived: boolean; realized_pnl: string | null; symbol: string };
 
 export type Order = {
   id: number;
@@ -120,6 +126,7 @@ export type Order = {
   filled_quantity: number;
   limit_price: number | null;
   reserved_cash: number;
+  fee_bps: number;
   status: string;
   status_reason: string | null;
   created_at: string;
@@ -154,3 +161,12 @@ export type Position = {
 export type LedgerEntry = { id: number; entry_type: string; amount: number; balance_after: number; reference_type: string | null; reference_id: string | null; memo: string | null; created_at: string };
 export type MetricPoint = { observed_date: string; subscriber_count: number | null; view_count: number | null; video_count: number | null; source: string };
 export type LeaderRow = { rank: number; username: string; total_equity: number; cash_balance: number; positions_value: number; return_pct: number };
+export type Notification = { id: number; kind: string; title: string; body: string; link: string | null; created_at: string; read: boolean };
+export type Mission = { code: string; title: string; description: string; reward: number; period: "once" | "daily"; target: number; progress: number; claimed: boolean; claimable: boolean };
+export type ChatMessage = { id: number; room: string; username: string; body: string; created_at: string };
+export type ExpertPick = { rank: number; expert_buyers: number; net_buy_notional: number; asset: Asset };
+export type ListingRequest = { id: number; youtube_channel_id: string; title: string; listing_status: string; created_at: string; note: string | null };
+export type AutoOrder = { id: number; asset_id: number; side: "buy" | "sell"; trigger_condition: "lte" | "gte"; trigger_price: number; order_type: "market" | "limit"; limit_price: number | null; quantity: number; status: string; expires_at: string; order_id: number | null; failure_reason: string | null; created_at: string };
+export type MarketHours = { open: boolean; enforced: boolean; session_open: string; session_close: string; next_open: string; next_close: string; schedule: { weekday: string; open: string; close: string }[]; note: string };
+export type DonationBox = { box: { daily_limit: number; received_today: number; sent_today: number; receive_remaining: number; send_remaining: number; full: boolean }; history: { id: number; amount: number; message: string | null; created_at: string; sender: string; recipient: string; outgoing: boolean }[] };
+export type ListingWindow = { open: boolean; opens_at: string | null; next_opens_at: string; limit: number; used: number; remaining: number; limit_reached: boolean };

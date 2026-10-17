@@ -193,13 +193,14 @@ RANK_KEYS = {
     "volume": (lambda a: a.volume_24h, True),
     "gainers": (lambda a: a.change_pct, True),
     "losers": (lambda a: a.change_pct, False),
+    "popularity": (lambda a: a.popularity_score or 0, True),
 }
 
 
 @router.get("/rankings", response_model=list[AssetOut])
-def rankings(metric: Literal["turnover", "market_cap", "volume", "gainers", "losers"] = "turnover",
+def rankings(metric: Literal["turnover", "market_cap", "volume", "gainers", "losers", "popularity"] = "turnover",
              limit: int = Query(default=20, ge=1, le=100), db: Session = Depends(get_db)):
-    """Market rankings: 거래대금 / 시가총액 / 거래량 / 상승률 / 하락률."""
+    """Market rankings: 거래대금 / 시가총액 / 거래량 / 상승률 / 하락률 / 인기도."""
     assets = list_assets(db=db, q=None, status=None, source=None, sort="symbol")
     key, desc = RANK_KEYS[metric]
     return sorted(assets, key=key, reverse=desc)[:limit]

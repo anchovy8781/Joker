@@ -1,0 +1,11 @@
+{
+  "name": "YouTube Exchange",
+  "short_name": "YTX",
+  "description": "유튜브 채널 가상 주식 거래 게임 (게임 크레딧 전용)",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0e13",
+  "theme_color": "#0b0e13",
+  "lang": "ko",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

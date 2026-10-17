@@ -6,7 +6,8 @@ import type { Asset } from "@/lib/api";
 const asset: Asset = {
   id: 7, symbol: "DTEST", reference_price: 10000, previous_price: 10000, current_price: 10000, change: 0, change_pct: 0,
   shares_outstanding: 1000000, trading_status: "active", halt_reason: null, price_updated_at: null, last_trade_at: null,
-  volume_24h: 0, trades_24h: 0, is_demo: true,
+  volume_24h: 0, trades_24h: 0, is_demo: true, turnover_24h: 0, market_cap: 10000000000, popularity_score: 25,
+  fee_bps: 20, fee_surcharge_reason: null, fee_surcharge_until: null,
   freshness: { status: "fresh", last_update_at: new Date().toISOString(), age_hours: 0, stale_after_hours: 48 },
   channel: { id: 1, youtube_channel_id: "DEMO_x", title: "[DEMO] X", handle: null, thumbnail_url: null, category: null,
     data_source: "demo", data_quality_status: "ok", last_data_update_at: null, hidden_subscriber_count: false },

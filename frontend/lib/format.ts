@@ -44,6 +44,7 @@ export function estimateFee(notional: number, feeBps = 20): number {
 }
 
 const ORDER_STATUS: Record<string, string> = {
+  scheduled: "예약",
   open: "대기",
   partially_filled: "부분 체결",
   filled: "체결 완료",
@@ -58,5 +59,21 @@ const REASONS: Record<string, string> = {
   SELF_TRADE_PREVENTED: "본인 주문과의 체결이 방지되었습니다",
   USER_CANCELED: "사용자 취소",
   MATCH_DEPTH_LIMIT: "한 번에 체결 가능한 주문 수를 초과해 잔량이 취소되었습니다",
+  RESERVED_UNTIL_OPEN: "장 시작 시 접수 순서대로 제출됩니다",
+  OUT_OF_BAND_AT_OPEN: "장 시작 시 지정가가 가격 제한 범위를 벗어나 취소되었습니다",
 };
 export const reasonLabel = (r: string | null) => (r ? REASONS[r] ?? r : "");
+
+export function kstTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+export function popularityLabel(score: number | null | undefined): string {
+  if (!score) return "—";
+  if (score >= 40) return "🔥 매우 높음";
+  if (score >= 30) return "높음";
+  if (score >= 20) return "보통";
+  if (score >= 10) return "낮음";
+  return "매우 낮음";
+}

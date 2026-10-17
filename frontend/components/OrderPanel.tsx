@@ -6,13 +6,14 @@ import { credits, estimateFee, orderStatusLabel, reasonLabel } from "@/lib/forma
 
 type Result = { order: Order; fills: Trade[]; replayed: boolean };
 
-export function OrderPanel({ asset, availableCash, availableShares, pickedPrice, onDone, loggedIn }: {
+export function OrderPanel({ asset, availableCash, availableShares, pickedPrice, onDone, loggedIn, marketOpen = true }: {
   asset: Asset;
   availableCash: number | null;
   availableShares: number | null;
   pickedPrice?: number | null;
   onDone?: () => void;
   loggedIn: boolean;
+  marketOpen?: boolean;
 }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [type, setType] = useState<"limit" | "market">("limit");
@@ -35,8 +36,9 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
     if (!valid) return null;
     const unit = type === "limit" ? p : asset.reference_price;
     const notional = q * unit;
-    return { notional, fee: estimateFee(notional) };
-  }, [valid, q, p, type, asset.reference_price]);
+    return { notional, fee: estimateFee(notional, asset.fee_bps) };
+  }, [valid, q, p, type, asset.reference_price, asset.fee_bps]);
+  const surcharge = asset.fee_bps > 20;
 
   const halted = asset.trading_status !== "active";
 
@@ -91,16 +93,18 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
           <span className="font-mono text-text">{side === "buy" ? credits(availableCash) : credits(availableShares)}</span></div>
         {est && <>
           <div className="flex justify-between"><span>예상 체결 금액{type === "market" && " (기준가)"}</span><span className="font-mono text-text">{credits(est.notional)}</span></div>
-          <div className="flex justify-between"><span>예상 수수료 (0.2%)</span><span className="font-mono text-text">{credits(est.fee)}</span></div>
+          <div className="flex justify-between"><span>예상 수수료 ({asset.fee_bps / 100}%{surcharge && " 할증"})</span><span className="font-mono text-text">{credits(est.fee)}</span></div>
         </>}
-        <p className="pt-1 text-[11px]">실제 체결가와 수수료는 서버가 계산합니다. {type === "market" && "시장가는 기준가 ±5% 범위에서만 체결되고 잔량은 취소됩니다."}</p>
+        <p className="pt-1 text-[11px]">실제 체결가와 수수료는 서버가 계산합니다. {type === "market" && "시장가는 기준가 ±5% 범위에서만 체결되고 잔량은 취소됩니다."}
+          {surcharge && side === "sell" && " 할증 종목을 손실 매도하면 매도 수수료가 면제됩니다."}</p>
+        {!marketOpen && <p className="pt-1 text-[11px] text-amber-300">◐ 장마감 중 — 예약 주문으로 접수되어 다음 장 시작 시 접수 순서대로 제출됩니다.</p>}
       </div>
       {!loggedIn ? (
         <a href="/login" className="btn-primary block w-full text-center">로그인 후 거래</a>
       ) : (
         <button type="submit" disabled={!valid || pending || halted}
           className={`w-full rounded-lg py-2.5 text-sm font-bold disabled:opacity-40 ${side === "buy" ? "bg-up text-black" : "bg-down text-white"}`}>
-          {halted ? "⏸ 거래 정지 중" : pending ? "서버 처리 중…" : side === "buy" ? "매수 주문" : "매도 주문"}
+          {halted ? "⏸ 거래 정지 중" : pending ? "서버 처리 중…" : `${side === "buy" ? "매수" : "매도"} ${marketOpen ? "주문" : "예약"}`}
         </button>
       )}
       {error && <div role="alert" className="rounded border border-red-500/50 bg-red-500/10 p-2 text-xs text-red-200">⚠ {error}</div>}

@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { Card, Empty, ErrorBox, FreshnessBadge } from "@/components/ui";
 import { api, ApiError, type Freshness } from "@/lib/api";
 import { credits, dateTime } from "@/lib/format";
 import { useApi } from "@/lib/hooks";
 
-type AdminChannel = { id: number; youtube_channel_id: string; title: string; data_source: string; listing_status: string; data_quality_status: string; freshness: Freshness; asset: { id: number; symbol: string; trading_status: string; halt_reason: string | null; reference_price: number } | null };
+type AdminChannel = { id: number; youtube_channel_id: string; title: string; data_source: string; listing_status: string; data_quality_status: string; freshness: Freshness; requested_by: string | null; request_note: string | null; asset: { id: number; symbol: string; trading_status: string; halt_reason: string | null; reference_price: number; celebrity_until: string | null; new_video_until: string | null } | null };
+type ChatRow = { id: number; room: string; user_id: number; username: string; body: string; created_at: string; hidden_at: string | null; hidden_reason: string | null };
 type RiskEv = { id: number; user_id: number | null; username: string | null; asset_id: number | null; event_type: string; severity: string; reason: string; evidence: unknown; created_at: string; reviewed_at: string | null; resolution: string | null };
 type Audit = { id: number; actor_id: number | null; action: string; target_type: string | null; target_id: string | null; request_id: string | null; metadata: unknown; created_at: string };
 type JobRow = { id: number; job_type: string; status: string; attempts: number; finished_at: string | null; last_error: string | null; result: unknown };
@@ -15,11 +16,16 @@ type Recon = { id: number; status: string; checked_accounts: number; mismatches:
 type PU = { id: number; symbol: string; effective_date: string; status: string; old_price: number; new_price: number; error: string | null };
 type Ticket = { id: number; status: string; reason?: string; message?: string; target_type?: string; target_id?: string | null; user_id?: number; created_at: string; resolution: string | null };
 
-const TABS = [["listing", "상장 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
+const TABS = [["listing", "상장 관리"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
 
 export default function AdminPage() {
   const { user, ready } = useAuth();
   const [tab, setTab] = useState<(typeof TABS)[number][0]>("listing");
+  useEffect(() => {
+    // Deep link from notifications, e.g. /admin?tab=listing (remote approval from the phone app).
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && TABS.some(([k]) => k === t)) setTab(t as (typeof TABS)[number][0]);
+  }, []);
   if (!ready) return <Empty>…</Empty>;
   if (user?.role !== "admin") return <Card><Empty>관리자 권한이 필요합니다.</Empty></Card>;
   return (
@@ -35,6 +41,7 @@ export default function AdminPage() {
       {tab === "recon" && <ReconTab />}
       {tab === "tickets" && <Tickets />}
       {tab === "notice" && <Notice />}
+      {tab === "chat" && <ChatModeration />}
     </div>
   );
 }
@@ -58,7 +65,8 @@ function Listing() {
   const { data, reload } = useApi<AdminChannel[]>("/api/admin/channels");
   const { msg, run } = useAction();
   const [form, setForm] = useState({ youtube_channel_id: "", title: "", data_source: "youtube_api" });
-  const [approve, setApprove] = useState<Record<number, { symbol: string; price: string; shares: string }>>({});
+  const [approve, setApprove] = useState<Record<number, { symbol: string; price: string; shares: string; celebrity: boolean }>>({});
+  const rows = data ? [...data].sort((a, b) => Number(b.listing_status === "pending") - Number(a.listing_status === "pending")) : null;
   return (
     <div className="space-y-4">
       <Card title="채널 등록 (상장 심사 대기열에 추가)">
@@ -75,14 +83,16 @@ function Listing() {
       </Card>
       {msg && <p className="text-sm">{msg}</p>}
       <Card title="채널 / 종목">
-        {!data ? <Empty>…</Empty> : (
+        {!rows ? <Empty>…</Empty> : (
           <div className="-mx-4 overflow-x-auto px-4"><table className="table">
             <thead><tr><th>채널</th><th>출처</th><th>상장</th><th>데이터</th><th>종목</th><th>조치</th></tr></thead>
-            <tbody>{data.map((c) => {
-              const ap = approve[c.id] ?? { symbol: "", price: "10000", shares: "1000000" };
+            <tbody>{rows.map((c) => {
+              const ap = approve[c.id] ?? { symbol: "", price: "10000", shares: "1000000", celebrity: false };
               return (
                 <tr key={c.id}>
-                  <td><div className="max-w-[220px] truncate">{c.title}</div><div className="font-mono text-[10px] text-muted">{c.youtube_channel_id}</div></td>
+                  <td><div className="max-w-[220px] truncate">{c.title}</div><div className="font-mono text-[10px] text-muted">{c.youtube_channel_id}</div>
+                    {c.requested_by && <div className="text-[10px] text-sky-300">요청: {c.requested_by}{c.request_note && ` · ${c.request_note}`}</div>}
+                    {c.asset?.celebrity_until && <div className="text-[10px] text-orange-300">🔥 유명인 신규 채널 할증</div>}</td>
                   <td>{c.data_source === "demo" ? "DEMO" : "YouTube API"}</td>
                   <td>{c.listing_status}</td>
                   <td><FreshnessBadge f={c.freshness} /> <span className="text-xs text-muted">{c.data_quality_status}</span></td>
@@ -94,7 +104,8 @@ function Listing() {
                         <input className="input w-20 py-1" placeholder="SYM" value={ap.symbol} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, symbol: e.target.value.toUpperCase() } })} />
                         <input className="input w-24 py-1" value={ap.price} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, price: e.target.value } })} title="최초 가격" />
                         <input className="input w-28 py-1" value={ap.shares} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, shares: e.target.value } })} title="발행 주식 수" />
-                        <button className="btn-primary py-1" onClick={() => { const r = askReason("상장 승인"); if (r) run(`/api/admin/channels/${c.id}/approve`, { symbol: ap.symbol, initial_price: Number(ap.price), shares_outstanding: Number(ap.shares), reason: r }, reload); }}>승인</button>
+                        <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={ap.celebrity} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, celebrity: e.target.checked } })} />유명인 신규</label>
+                        <button className="btn-primary py-1" onClick={() => { const r = askReason("상장 승인"); if (r) run(`/api/admin/channels/${c.id}/approve`, { symbol: ap.symbol, initial_price: Number(ap.price), shares_outstanding: Number(ap.shares), reason: r, celebrity_new_channel: ap.celebrity }, reload); }}>승인</button>
                         <button className="btn-danger py-1" onClick={() => { const r = askReason("상장 거절"); if (r) run(`/api/admin/channels/${c.id}/reject`, { reason: r }, reload); }}>거절</button>
                       </span>
                     )}
@@ -264,6 +275,31 @@ function Notice() {
       <button className="btn-primary mt-2" disabled={!title || !body} onClick={() => run("/api/admin/announcements", { title, body }, () => { setTitle(""); setBody(""); })}>등록</button>
       {msg && <p className="mt-2 text-sm">{msg}</p>}
       <ErrorBox error={null} />
+    </Card>
+  );
+}
+
+function ChatModeration() {
+  const { data, reload } = useApi<ChatRow[]>("/api/admin/chat?limit=200", 10_000);
+  const { msg, run } = useAction();
+  return (
+    <Card title="채팅 관리">
+      {msg && <p className="mb-2 text-sm">{msg}</p>}
+      {!data?.length ? <Empty>메시지 없음</Empty> : (
+        <ul className="divide-y divide-line text-sm">
+          {data.map((m) => (
+            <li key={m.id} className={`flex items-start gap-2 py-2 ${m.hidden_at ? "opacity-50" : ""}`}>
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] text-muted">#{m.id} · {m.room} · {m.username} · {dateTime(m.created_at)}</div>
+                <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                {m.hidden_at && <div className="text-[11px] text-red-300">숨김: {m.hidden_reason}</div>}
+              </div>
+              {!m.hidden_at && <button className="btn-danger shrink-0 py-0.5 text-xs" onClick={() => { const r = askReason("메시지 숨김"); if (r) run(`/api/admin/chat/${m.id}/hide`, { reason: r }, reload); }}>숨김</button>}
+              <button className="btn-ghost shrink-0 py-0.5 text-xs" onClick={() => { const r = askReason("작성자 제한"); if (r) run(`/api/admin/users/${m.user_id}/status`, { status: "restricted", reason: r }, reload); }}>제한</button>
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }

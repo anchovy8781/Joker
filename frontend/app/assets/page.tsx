@@ -25,7 +25,7 @@ export default function AssetsPage() {
   const { data, error } = useApi<Asset[]>(`/api/assets?${params}`, 15_000);
 
   return (
-    <Card title="종목 목록">
+    <Card title="종목 목록" right={<a href="/listings" className="btn-ghost px-2 py-1 text-xs">📝 상장 요청</a>}>
       <div className="mb-4 grid gap-2 md:grid-cols-4">
         <input className="input" placeholder="심볼 또는 채널명 검색" value={q} onChange={(e) => setQ(e.target.value)} aria-label="검색" />
         <select className="input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="거래 상태">
@@ -43,6 +43,8 @@ export default function AssetsPage() {
           <option value="change">등락률순</option>
           <option value="volume">거래량순</option>
           <option value="price">가격순</option>
+          <option value="market_cap">시가총액순</option>
+          <option value="turnover">거래대금순</option>
         </select>
       </div>
       <ErrorBox error={error} />

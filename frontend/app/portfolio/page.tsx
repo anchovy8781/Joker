@@ -10,7 +10,8 @@ import { useApi } from "@/lib/hooks";
 
 const LEDGER_LABEL: Record<string, string> = {
   signup_grant: "가입 지급금", trade_buy: "매수 대금", trade_sell: "매도 대금", trade_fee: "거래 수수료",
-  admin_adjustment: "운영 조정", correction: "정정",
+  admin_adjustment: "운영 조정", correction: "정정", mission_reward: "미션 보상", donation_sent: "기부 보냄",
+  donation_received: "기부 받음",
 };
 
 type RiskInfo = { risk_level: string; status: string; events: { id: number; event_type: string; severity: string; reason: string; created_at: string; resolution: string | null }[]; appeals: { id: number; status: string; message: string; resolution: string | null }[] };
@@ -91,7 +92,7 @@ export default function Portfolio() {
                   <td className="num">{o.limit_price ? credits(o.limit_price) : "—"}</td>
                   <td className="num">{o.filled_quantity}/{o.quantity}</td>
                   <td title={reasonLabel(o.status_reason)}>{orderStatusLabel(o.status)}</td>
-                  <td>{(o.status === "open" || o.status === "partially_filled") && <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => cancel(o.id)}>취소</button>}</td>
+                  <td>{(o.status === "open" || o.status === "partially_filled" || o.status === "scheduled") && <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => cancel(o.id)}>취소</button>}</td>
                 </tr>))}
               </tbody>
             </table></div>
@@ -111,7 +112,7 @@ export default function Portfolio() {
                   <td className={t.side === "buy" ? "text-up" : "text-down"}>{t.side === "buy" ? "▲ 매수" : "▼ 매도"}</td>
                   <td className="num">{credits(t.execution_price)}</td>
                   <td className="num">{credits(t.quantity)}</td>
-                  <td className="num">{credits(t.fee)}</td>
+                  <td className="num">{t.fee_waived ? <span title="할증 종목 손실 매도 수수료 면제">면제</span> : credits(t.fee)}</td>
                   <td className="num">{t.realized_pnl !== null ? <PnL value={t.realized_pnl} /> : "—"}</td>
                 </tr>))}
               </tbody>
