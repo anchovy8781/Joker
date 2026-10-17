@@ -21,14 +21,16 @@ def test_14_cannot_view_or_modify_other_users_orders(make_user, bare_asset, db):
     assert mallory.get("/api/account").json()["user_id"] == mallory.id
 
 
-def test_14b_account_endpoints_ignore_client_supplied_user_ids(make_user, db):
+def test_14b_account_endpoints_ignore_client_supplied_user_ids(make_user, asset, db):
     alice, mallory = make_user(), make_user()
+    alice.order(asset, "buy", 1)  # alice now has trade ledger rows; mallory does not
     r = mallory.get(f"/api/account?user_id={alice.id}")
     assert r.json()["user_id"] == mallory.id
     r = mallory.get(f"/api/account/ledger?user_id={alice.id}")
-    assert all(True for _ in r.json())
+    assert [e["entry_type"] for e in r.json()] == ["signup_grant"]
+    assert mallory.get(f"/api/trades?user_id={alice.id}").json() == []
     db.expire_all()
-    assert db.get(Account, alice.id).cash_balance == 1_000_000
+    assert db.get(Account, mallory.id).cash_balance == 1_000_000
 
 
 def test_14c_anonymous_requests_rejected(app, asset):
@@ -136,3 +138,33 @@ def test_sql_injection_in_search_is_inert(make_user, asset):
     assert u.get("/api/assets").status_code == 200
     r = u.get("/api/assets", params={"q": "%"})
     assert r.json() == []  # wildcard is escaped, not a match-all
+
+
+def test_client_ip_ignores_spoofed_forwarded_for(monkeypatch):
+    from starlette.requests import Request
+
+    from app.config import get_settings
+    from app.security import client_ip
+
+    def req(xff):
+        headers = [(b"x-forwarded-for", xff.encode())] if xff else []
+        return Request({"type": "http", "headers": headers, "client": ("10.0.0.5", 1234)})
+
+    monkeypatch.setattr(get_settings(), "trusted_proxy_hops", 0)
+    assert client_ip(req("1.2.3.4")) == "10.0.0.5"  # header ignored by default
+    monkeypatch.setattr(get_settings(), "trusted_proxy_hops", 1)
+    # Client forged "6.6.6.6"; the trusted edge proxy appended the real address.
+    assert client_ip(req("6.6.6.6, 203.0.113.9")) == "203.0.113.9"
+    assert client_ip(req("")) == "10.0.0.5"
+
+
+def test_production_refuses_insecure_defaults(monkeypatch):
+    import pytest
+
+    from app.config import get_settings
+    from app.main import create_app
+
+    s = get_settings()
+    monkeypatch.setattr(s, "env", "production")
+    with pytest.raises(RuntimeError, match="YEX_IP_HASH_SECRET"):
+        create_app()

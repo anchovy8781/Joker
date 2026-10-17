@@ -1,0 +1,75 @@
+# Development / single-host stack:  cp .env.example .env && docker compose up --build
+# For production put an HTTPS reverse proxy in front of `web` (see docs/DEPLOYMENT.md).
+name: youtube-exchange
+
+x-backend-env: &backend-env
+  YEX_ENV: ${YEX_ENV:-development}
+  YEX_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  YEX_IP_HASH_SECRET: ${YEX_IP_HASH_SECRET}
+  YEX_COOKIE_SECURE: ${YEX_COOKIE_SECURE:-true}
+  YEX_CORS_ORIGINS: ${YEX_CORS_ORIGINS:-["http://localhost:3000"]}
+  YEX_TRUSTED_PROXY_HOPS: ${YEX_TRUSTED_PROXY_HOPS:-0}
+  YEX_YOUTUBE_API_KEY: ${YEX_YOUTUBE_API_KEY:-}
+  YEX_TURNSTILE_SECRET: ${YEX_TURNSTILE_SECRET:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"   # local tools only; never expose publicly
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment: *backend-env
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment: *backend-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    expose: ["8000"]
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"   # API docs at /api/docs in development
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://api:8000
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  pgdata:

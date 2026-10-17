@@ -47,10 +47,13 @@ def token_digest(token: str) -> str:
 
 
 def client_ip(request: Request) -> str:
-    if get_settings().trust_proxy_headers:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+    """Client IP. With N trusted proxies, the real client is the N-th entry from the right of
+    X-Forwarded-For; entries further left are client-controlled and therefore ignored."""
+    hops = get_settings().trusted_proxy_hops
+    if hops > 0:
+        chain = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+        if len(chain) >= hops:
+            return chain[-hops]
     return request.client.host if request.client else "unknown"
 
 

@@ -19,7 +19,10 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     # Secret used to hash IP addresses before storage (never store raw IPs).
     ip_hash_secret: str = "change-me-in-env"
-    trust_proxy_headers: bool = False
+    # Number of trusted reverse proxies that append to X-Forwarded-For (e.g. Caddy/nginx = 1).
+    # 0 = ignore the header entirely. Next.js rewrites pass headers through without appending,
+    # so they do not count as a hop. Never set this when the API is directly reachable.
+    trusted_proxy_hops: int = 0
 
     # Optional free Cloudflare Turnstile CAPTCHA for high-risk signups. Empty = disabled.
     turnstile_secret: str = ""

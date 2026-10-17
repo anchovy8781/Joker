@@ -14,8 +14,24 @@ from app.security import client_ip, hit_rate_limit, ip_hash
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
+def _check_production_settings(s) -> None:
+    problems = []
+    if s.ip_hash_secret in ("", "change-me-in-env") or len(s.ip_hash_secret) < 32:
+        problems.append("YEX_IP_HASH_SECRET must be a random value of 32+ characters")
+    if not s.cookie_secure:
+        problems.append("YEX_COOKIE_SECURE must be true (HTTPS only)")
+    if any(o.startswith("http://") for o in s.cors_origins):
+        problems.append("YEX_CORS_ORIGINS must only contain https:// origins")
+    if "yex_dev_password" in s.database_url:
+        problems.append("YEX_DATABASE_URL uses the development password")
+    if problems:
+        raise RuntimeError("Refusing to start in production: " + "; ".join(problems))
+
+
 def create_app() -> FastAPI:
     s = get_settings()
+    if s.is_production:
+        _check_production_settings(s)
     app = FastAPI(
         title="YouTube Exchange API",
         version="0.1.0",
