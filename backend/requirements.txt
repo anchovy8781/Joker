@@ -1,0 +1,11 @@
+# Pinned, mutually compatible versions (verified with Python 3.13 + PostgreSQL 16).
+fastapi==0.136.3
+starlette==1.8.0
+uvicorn[standard]==0.54.0
+sqlalchemy==2.0.55
+alembic==1.20.0
+psycopg[binary]==3.3.6
+pydantic==2.14.1
+pydantic-settings==2.16.0
+argon2-cffi==25.1.0
+httpx==0.28.1
