@@ -19,8 +19,10 @@ async function run({ published, saved, manual, builtIn = "https://youtube-exchan
       return { ok: true, json: async () => ({ url: published }) };
     }
     const origin = new URL(url).origin;
-    if (!reachable(origin)) throw new TypeError("unreachable");
-    return { ok: true };
+    const state = reachable(origin);
+    if (state === "notfound") return { ok: false, status: 404, json: async () => { throw new Error("html"); } };
+    if (!state) throw new TypeError("unreachable");
+    return { ok: true, json: async () => ({ app: "youtube-exchange" }) };
   };
   w.__ytxNavigate = (v) => { navigated = v; };
   w.YTX_DEFAULT_SERVER = builtIn;
@@ -56,3 +58,6 @@ assert(r.navigated === "https://old-one-two.trycloudflare.com/", "built-in down 
 
 r = await run({ published: "https://new-a-b.trycloudflare.com", saved: "https://192.168.0.10:3000", manual: true });
 assert(r.navigated === "https://192.168.0.10:3000/", "a manually chosen server keeps priority");
+
+r = await run({ published: undefined, reachable: () => "notfound" });
+assert(r.navigated === null && r.failedVisible, "host 'Not Found' page (service not deployed) is not treated as the server");

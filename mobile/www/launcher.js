@@ -39,8 +39,10 @@
   }
 
   function reachable(url) {
-    // Opaque (no-cors) response is enough: only network failures matter.
-    return fetch(url + "/manifest.webmanifest", { mode: "no-cors", cache: "no-store" });
+    // Must be this app's server, not a host's "Not Found" page for a service that doesn't exist.
+    return fetch(url + "/api/ping", { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (d) { if (!d || d.app !== "youtube-exchange") throw new Error("not ytx"); });
   }
 
   // window.__ytxNavigate exists only in the launcher tests (jsdom cannot navigate).
@@ -88,7 +90,7 @@
     auto.hidden = false;
     failed.hidden = false;
     spinner.hidden = true;
-    status.textContent = "서버에 연결할 수 없어요. 인터넷 연결을 확인하고 다시 시도해 주세요.";
+    status.textContent = "서버에 연결할 수 없어요. 서버가 아직 준비되지 않았거나 인터넷 연결이 끊겼어요. 잠시 후 다시 시도해 주세요.";
   }
 
   function start() {

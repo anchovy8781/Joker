@@ -78,6 +78,12 @@ def create_app() -> FastAPI:
               internal.router):
         app.include_router(r)
 
+    @app.get("/api/ping")
+    def ping():
+        # Readable cross-origin (no cookies) so the Android launcher can tell this server
+        # apart from a hosting provider's "Not Found" page before navigating to it.
+        return JSONResponse({"app": "youtube-exchange"}, headers={"Access-Control-Allow-Origin": "*"})
+
     @app.get("/healthz")
     def healthz():
         return {"status": "ok"}

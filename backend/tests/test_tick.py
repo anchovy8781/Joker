@@ -63,3 +63,9 @@ def test_bootstrap_admin_is_idempotent(db, capsys):
     from app.models import MarketAsset
 
     assert db.execute(select(func.count(MarketAsset.id))).scalar_one() == 8
+
+
+def test_ping_identifies_the_app_cross_origin(app):
+    r = TestClient(app).get("/api/ping", headers={"Origin": "https://localhost"})
+    assert r.status_code == 200 and r.json() == {"app": "youtube-exchange"}
+    assert r.headers["access-control-allow-origin"] == "*"
