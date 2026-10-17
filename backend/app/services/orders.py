@@ -22,12 +22,13 @@ from app.config import get_settings
 from app.errors import AppError
 from app.models import Account, Channel, MarketAsset, Order, Position, Trade, User
 from app.security import utcnow
-from app.services import bars
+from app.services import bars, market_hours
 from app.services.fees import bps_down, bps_up, buy_reservation, fee_for, fee_policy
 from app.services.ledger import lock_accounts, post_entry
 from app.services.notify import notify
 
-RESTING = ("open", "partially_filled")
+RESTING = ("open", "partially_filled")  # on the book
+RESERVING = RESTING + ("scheduled",)  # holding a cash/share reservation
 MAX_MATCH_DEPTH = 500  # resting orders examined (and locked) per incoming order
 
 
@@ -117,21 +118,7 @@ def _find_existing(db: Session, user_id: int, req: OrderRequest) -> Order | None
     return existing
 
 
-def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
-    """Validate, reserve and match an order. Caller commits (see run_in_transaction)."""
-    _validate_shape(req)
-    existing = _find_existing(db, user.id, req)
-    if existing is not None:
-        return PlaceResult(order=existing, replayed=True)
-
-    s = get_settings()
-    asset = lock_asset(db, req.asset_id)
-    # Re-check after acquiring the asset lock: a concurrent retry may have just committed.
-    existing = _find_existing(db, user.id, req)
-    if existing is not None:
-        return PlaceResult(order=existing, replayed=True)
-
-    channel = db.get(Channel, asset.channel_id)
+def _check_tradable(asset: MarketAsset, channel: Channel | None, user: User) -> None:
     if asset.trading_status != "active" or channel is None or channel.listing_status != "listed":
         raise AppError(409, "TRADING_HALTED", asset.halt_reason or "Trading is halted for this asset")
     if user.role != "system":
@@ -145,52 +132,73 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
                 "You can submit an appeal from your account page.",
             )
 
-    # ---- price checks (server-defined; client never supplies execution prices or fees)
+
+def _protect_price(db: Session, asset: MarketAsset, side: str, order_type: str, limit_price: int | None) -> int:
+    """Limit price, or the worst acceptable price for a market order (server-defined)."""
+    s = get_settings()
     ref = asset.reference_price
-    if req.order_type == "limit":
+    if order_type == "limit":
         band = price_band(db, asset)
         lo, hi = max(s.min_price, bps_down(ref, band)), bps_up(ref, band)
-        if not (lo <= req.limit_price <= hi):  # type: ignore[operator]
-            raise AppError(
-                422,
-                "PRICE_OUT_OF_BAND",
-                f"Limit price must be between {lo} and {hi}",
-                {"min": lo, "max": hi},
-            )
-        protect = req.limit_price
-    else:
-        dev = s.market_order_max_deviation_bps
-        protect = bps_up(ref, dev) if req.side == "buy" else max(1, bps_down(ref, dev))
-    assert protect is not None
-    # Fee rate is fixed now (surcharge windows may open/close while the order rests).
-    fee_bps = fee_policy(asset, utcnow()).bps
+        if not (lo <= limit_price <= hi):  # type: ignore[operator]
+            raise AppError(422, "PRICE_OUT_OF_BAND", f"Limit price must be between {lo} and {hi}",
+                           {"min": lo, "max": hi})
+        return limit_price  # type: ignore[return-value]
+    dev = s.market_order_max_deviation_bps
+    return bps_up(ref, dev) if side == "buy" else max(1, bps_down(ref, dev))
 
-    # ---- collect the resting orders we could match (price-time priority)
-    opposite = "sell" if req.side == "buy" else "buy"
-    q = select(Order).where(
-        Order.asset_id == asset.id,
-        Order.side == opposite,
-        Order.status.in_(RESTING),
-    )
-    if req.side == "buy":
+
+def _collect_makers(db: Session, asset_id: int, side: str, protect: int, quantity: int, user_id: int):
+    """Resting opposite orders we could match, in price-time priority (locked)."""
+    opposite = "sell" if side == "buy" else "buy"
+    q = select(Order).where(Order.asset_id == asset_id, Order.side == opposite, Order.status.in_(RESTING))
+    if side == "buy":
         q = q.where(Order.limit_price <= protect).order_by(Order.limit_price.asc(), Order.id.asc())
     else:
         q = q.where(Order.limit_price >= protect).order_by(Order.limit_price.desc(), Order.id.asc())
-
     makers: list[Order] = []
-    needed = req.quantity
+    needed = quantity
     self_trade_blocked = False
     candidates = list(db.execute(q.limit(MAX_MATCH_DEPTH).with_for_update()).scalars())
     depth_exhausted = len(candidates) == MAX_MATCH_DEPTH
     for resting in candidates:
         if needed <= 0:
             break
-        if resting.user_id == user.id:
+        if resting.user_id == user_id:
             self_trade_blocked = True
             break
         makers.append(resting)
         needed -= resting.remaining_quantity
+    return makers, self_trade_blocked, depth_exhausted
 
+
+def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
+    """Validate, reserve and match an order. Caller commits (see run_in_transaction).
+    Outside trading hours the order is accepted as a reservation ('scheduled')."""
+    _validate_shape(req)
+    existing = _find_existing(db, user.id, req)
+    if existing is not None:
+        return PlaceResult(order=existing, replayed=True)
+
+    asset = lock_asset(db, req.asset_id)
+    # Re-check after acquiring the asset lock: a concurrent retry may have just committed.
+    existing = _find_existing(db, user.id, req)
+    if existing is not None:
+        return PlaceResult(order=existing, replayed=True)
+    _check_tradable(asset, db.get(Channel, asset.channel_id), user)
+
+    # ---- price checks (server-defined; client never supplies execution prices or fees)
+    protect = _protect_price(db, asset, req.side, req.order_type, req.limit_price)
+    now = utcnow()
+    # Fee rate is fixed now (surcharge windows may open/close while the order rests).
+    fee_bps = fee_policy(asset, now).bps
+    market_open = market_hours.is_open(now)
+
+    if market_open:
+        makers, self_trade_blocked, depth_exhausted = _collect_makers(
+            db, asset.id, req.side, protect, req.quantity, user.id)
+    else:
+        makers, self_trade_blocked, depth_exhausted = [], False, False
     accounts = lock_accounts(db, {user.id} | {m.user_id for m in makers})
     account = accounts[user.id]
 
@@ -216,41 +224,20 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
                 {"required": req.quantity, "available": available},
             )
 
-    if req.order_type == "market" and not makers:
+    base = dict(user_id=user.id, asset_id=asset.id, side=req.side, order_type=req.order_type,
+                quantity=req.quantity, remaining_quantity=req.quantity, limit_price=req.limit_price,
+                fee_bps=fee_bps, protect_price=protect if req.order_type == "market" else None,
+                idempotency_key=req.idempotency_key, request_hash=req.digest())
+
+    if market_open and req.order_type == "market" and not makers:
         # No counterparty within price protection: record a rejection, never a fake fill.
-        order = Order(
-            user_id=user.id,
-            asset_id=asset.id,
-            side=req.side,
-            order_type=req.order_type,
-            quantity=req.quantity,
-            remaining_quantity=req.quantity,
-            limit_price=None,
-            reserved_cash=0,
-            fee_bps=fee_bps,
-            status="rejected",
-            status_reason="SELF_TRADE_PREVENTED" if self_trade_blocked else "NO_LIQUIDITY",
-            idempotency_key=req.idempotency_key,
-            request_hash=req.digest(),
-        )
+        order = Order(**base, reserved_cash=0, status="rejected",
+                      status_reason="SELF_TRADE_PREVENTED" if self_trade_blocked else "NO_LIQUIDITY")
         db.add(order)
         db.flush()
         return PlaceResult(order=order)
 
-    order = Order(
-        user_id=user.id,
-        asset_id=asset.id,
-        side=req.side,
-        order_type=req.order_type,
-        quantity=req.quantity,
-        remaining_quantity=req.quantity,
-        limit_price=req.limit_price,
-        reserved_cash=reserve_cash,
-        fee_bps=fee_bps,
-        status="open",
-        idempotency_key=req.idempotency_key,
-        request_hash=req.digest(),
-    )
+    order = Order(**base, reserved_cash=reserve_cash, status="open" if market_open else "scheduled")
     db.add(order)
     try:
         with db.begin_nested():
@@ -266,24 +253,33 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
         assert pos is not None
         pos.reserved_quantity += req.quantity
 
-    # ---- match
+    if not market_open:
+        order.status_reason = "RESERVED_UNTIL_OPEN"
+        db.flush()
+        notify(db, user.id, "order_scheduled", f"{asset.symbol} 예약 주문 접수",
+               f"장 시작 시 주문이 제출됩니다 · 주문 #{order.id}", f"/assets/{asset.id}")
+        return PlaceResult(order=order)
+
+    trades = _match_and_finalize(db, asset, order, makers, self_trade_blocked, depth_exhausted, accounts, now)
+    return PlaceResult(order=order, trades=trades)
+
+
+def _match_and_finalize(db, asset, order, makers, self_trade_blocked, depth_exhausted, accounts, now):
     trades: list[Trade] = []
-    now = utcnow()
     for maker in makers:
         if order.remaining_quantity == 0:
             break
         qty = min(order.remaining_quantity, maker.remaining_quantity)
         price = maker.limit_price
         assert price is not None
-        buy_order, sell_order = (order, maker) if req.side == "buy" else (maker, order)
-        trades.append(_execute(db, asset, buy_order, sell_order, qty, price, req.side, accounts, now))
+        buy_order, sell_order = (order, maker) if order.side == "buy" else (maker, order)
+        trades.append(_execute(db, asset, buy_order, sell_order, qty, price, order.side, accounts, now))
 
-    # ---- finalise the incoming order
     if order.remaining_quantity == 0:
         order.status = "filled"
-    elif req.order_type == "market":
+    elif order.order_type == "market":
         order.status = "canceled"
-        order.status_reason = "PARTIAL_FILL_REMAINDER_CANCELED"
+        order.status_reason = "PARTIAL_FILL_REMAINDER_CANCELED" if trades else "NO_LIQUIDITY"
     elif self_trade_blocked:
         order.status = "canceled"
         order.status_reason = "SELF_TRADE_PREVENTED"
@@ -293,12 +289,41 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
         order.status_reason = "MATCH_DEPTH_LIMIT"
     else:
         order.status = "partially_filled" if order.remaining_quantity < order.quantity else "open"
+        order.status_reason = None
     if order.status in ("filled", "canceled"):
-        _release_remaining(db, order, accounts[user.id])
+        _release_remaining(db, order, accounts[order.user_id])
     order.updated_at = now
     db.flush()
     _notify_fills(db, asset, order, trades)
-    return PlaceResult(order=order, trades=trades)
+    return trades
+
+
+def activate_scheduled(db: Session, order_id: int) -> list[Trade]:
+    """Submit one reservation to the book (called at session open, oldest first)."""
+    peek = db.get(Order, order_id)
+    if peek is None:
+        return []
+    asset = lock_asset(db, peek.asset_id)
+    order = db.execute(select(Order).where(Order.id == order_id).with_for_update()).scalar_one()
+    if order.status != "scheduled" or asset.trading_status != "active":
+        return []  # halted assets keep their reservations until trading resumes
+    now = utcnow()
+    try:
+        protect = _protect_price(db, asset, order.side, order.order_type, order.limit_price)
+    except AppError:
+        # The reference price moved and the limit is no longer inside today's price band.
+        _release_remaining(db, order, lock_accounts(db, {order.user_id})[order.user_id])
+        order.status, order.status_reason, order.updated_at = "canceled", "OUT_OF_BAND_AT_OPEN", now
+        notify(db, order.user_id, "order_canceled", f"{asset.symbol} 예약 주문 취소",
+               "지정가가 오늘의 가격 제한 범위를 벗어나 예약 주문이 취소되었습니다.", f"/assets/{asset.id}")
+        return []
+    if order.order_type == "market" and order.protect_price is not None:
+        # Never exceed the price the reservation was sized for.
+        protect = min(protect, order.protect_price) if order.side == "buy" else max(protect, order.protect_price)
+    order.status = "open"
+    makers, stp, depth = _collect_makers(db, asset.id, order.side, protect, order.remaining_quantity, order.user_id)
+    accounts = lock_accounts(db, {order.user_id} | {m.user_id for m in makers})
+    return _match_and_finalize(db, asset, order, makers, stp, depth, accounts, now)
 
 
 def _notify_fills(db: Session, asset: MarketAsset, taker: Order, trades: list[Trade]) -> None:
@@ -433,7 +458,7 @@ def cancel_order(db: Session, user: User, order_id: int, reason: str = "USER_CAN
         raise AppError(404, "ORDER_NOT_FOUND", "Order not found")
     lock_asset(db, peek.asset_id)
     order = db.execute(select(Order).where(Order.id == order_id).with_for_update()).scalar_one()
-    if order.status not in RESTING:
+    if order.status not in RESERVING:
         raise AppError(409, "ORDER_NOT_CANCELABLE", f"Order is already {order.status}")
     account = lock_accounts(db, {user.id})[user.id]
     _release_remaining(db, order, account)
@@ -446,7 +471,7 @@ def cancel_order(db: Session, user: User, order_id: int, reason: str = "USER_CAN
 
 def cancel_all_for_asset(db: Session, asset_id: int, user_id: int | None, reason: str) -> int:
     """Cancel resting orders on an asset (optionally only one user's). Caller holds asset lock."""
-    q = select(Order).where(Order.asset_id == asset_id, Order.status.in_(RESTING))
+    q = select(Order).where(Order.asset_id == asset_id, Order.status.in_(RESERVING))
     if user_id is not None:
         q = q.where(Order.user_id == user_id)
     orders = list(db.execute(q.order_by(Order.id).with_for_update()).scalars())

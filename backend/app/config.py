@@ -48,6 +48,23 @@ class Settings(BaseSettings):
     mm_spread_bps: list[int] = Field(default_factory=lambda: [50, 150, 300])
     mm_level_fraction_bps: int = 50  # each level offers 0.5% of remaining inventory
 
+    # Trading sessions (Korea time). Disable only for tests/local experiments.
+    market_hours_enabled: bool = True
+
+    # Listing requests: open daily from this hour (KST) until midnight, global daily cap.
+    listing_request_open_hour_kst: int = 19
+    listing_requests_per_day: int = 25
+
+    # Donation box (user-to-user virtual credit gifts)
+    donation_box_daily_limit: int = 500_000  # max a user can receive (and send) per KST day
+    donation_min_amount: int = 100
+    donation_min_account_age_hours: int = 72
+    donation_min_trades: int = 5
+
+    # Auto (price-triggered) orders
+    auto_orders_max_active: int = 20
+    auto_orders_max_days: int = 30
+
     # Data freshness
     stale_after_hours: int = 48
 

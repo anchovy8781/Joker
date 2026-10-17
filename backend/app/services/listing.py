@@ -19,7 +19,7 @@ from app.config import get_settings
 from app.errors import AppError
 from app.models import Account, Channel, ChannelMetric, MarketAsset, Position, User
 from app.security import utcnow
-from app.services import bars
+from app.services import bars, market_hours
 from app.services.audit import write_audit
 from app.services.fees import bps_down, bps_up, buy_reservation
 from app.services.notify import notify, notify_holders
@@ -90,6 +90,29 @@ def store_snapshot(db: Session, channel: Channel, snap: ChannelSnapshot, observe
         )
 
 
+def store_engagement(db: Session, channel: Channel, eng, observed_at: datetime) -> None:
+    """Totals over recent uploads (likes may be hidden by the creator -> not stored)."""
+    from sqlalchemy import text
+
+    values = {"recent_view_count": eng.views}
+    if eng.likes is not None:
+        values["recent_like_count"] = eng.likes
+    if eng.comments is not None:
+        values["recent_comment_count"] = eng.comments
+    for metric_type, value in values.items():
+        db.execute(
+            text(
+                "INSERT INTO channel_metrics (channel_id, metric_type, metric_value, observed_at, "
+                "observed_date, source, source_timestamp, data_quality_status) "
+                "VALUES (:c, :t, :v, :o, :d, :s, NULL, 'ok') "
+                "ON CONFLICT (channel_id, metric_type, source, observed_date) DO UPDATE SET "
+                "metric_value = EXCLUDED.metric_value, observed_at = EXCLUDED.observed_at"
+            ),
+            {"c": channel.id, "t": metric_type, "v": value, "o": observed_at, "d": observed_at.date(),
+             "s": channel.data_source},
+        )
+
+
 def backfill_demo_history(db: Session, channel: Channel, days: int = 35, now: datetime | None = None) -> None:
     """Demo channels get synthetic history so the engine can run immediately (labelled demo)."""
     assert channel.data_source == "demo"
@@ -98,7 +121,9 @@ def backfill_demo_history(db: Session, channel: Channel, days: int = 35, now: da
     for back in range(days, -1, -1):
         day = (now - timedelta(days=back)).date()
         snap = demo.snapshot_for(channel.youtube_channel_id, channel.title, day)
-        store_snapshot(db, channel, snap, datetime(day.year, day.month, day.day, 12, tzinfo=UTC))
+        at = datetime(day.year, day.month, day.day, 12, tzinfo=UTC)
+        store_snapshot(db, channel, snap, at)
+        store_engagement(db, channel, demo.engagement_for(channel.youtube_channel_id, day), at)
     channel.last_data_update_at = now
     channel.data_quality_status = "ok"
 
@@ -244,7 +269,7 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
     asset = lock_asset(db, asset_id)
     canceled = cancel_all_for_asset(db, asset_id, mm.id, "MM_REQUOTE")
     placed = 0
-    if asset.trading_status != "active":
+    if asset.trading_status != "active" or not market_hours.is_open(utcnow()):
         return {"canceled": canceled, "placed": 0}
     ref = asset.reference_price
     pos = db.get(Position, (mm.id, asset_id))

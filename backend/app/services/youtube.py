@@ -41,6 +41,16 @@ class ChannelSnapshot:
     video_count: int
     source_timestamp: datetime | None
     hidden_subscriber_count: bool
+    uploads_playlist_id: str | None = None
+
+
+@dataclass
+class Engagement:
+    """Totals over the channel's most recent uploads (public video statistics)."""
+    videos: int
+    views: int
+    likes: int | None  # None when every recent video hides its like count
+    comments: int | None
 
 
 @dataclass
@@ -93,7 +103,7 @@ class YouTubeDataAPIProvider:
         for i in range(0, len(channel_ids), 50):  # API max 50 ids per call, 1 unit each
             batch = channel_ids[i : i + 50]
             data = self._get(
-                "channels", {"part": "snippet,statistics", "id": ",".join(batch), "maxResults": 50}, 1
+                "channels", {"part": "snippet,statistics,contentDetails", "id": ",".join(batch), "maxResults": 50}, 1
             )
             for item in data.get("items", []):
                 st = item.get("statistics", {})
@@ -111,9 +121,37 @@ class YouTubeDataAPIProvider:
                     video_count=int(st.get("videoCount", 0)),
                     source_timestamp=None,  # API does not timestamp statistics; we record fetch time
                     hidden_subscriber_count=hidden,
+                    uploads_playlist_id=(item.get("contentDetails", {}).get("relatedPlaylists", {})
+                                         .get("uploads")),
                 )
         missing = [c for c in channel_ids if c not in snapshots]
         return FetchResult(snapshots, missing)
+
+    def fetch_engagement(self, playlists: dict[str, str], per_channel: int = 10) -> dict[str, Engagement]:
+        """Likes/views/comments of each channel's latest uploads.
+        Cost: 1 unit per channel (playlistItems) + 1 unit per 50 videos (videos.list)."""
+        video_owner: dict[str, str] = {}
+        for channel_id, playlist in playlists.items():
+            data = self._get("playlistItems", {"part": "contentDetails", "playlistId": playlist,
+                                               "maxResults": per_channel}, 1)
+            for it in data.get("items", []):
+                vid = (it.get("contentDetails") or {}).get("videoId")
+                if vid:
+                    video_owner[vid] = channel_id
+        totals = {c: {"videos": 0, "views": 0, "likes": None, "comments": None} for c in playlists}
+        ids = list(video_owner)
+        for i in range(0, len(ids), 50):
+            data = self._get("videos", {"part": "statistics", "id": ",".join(ids[i:i + 50])}, 1)
+            for v in data.get("items", []):
+                t = totals[video_owner[v["id"]]]
+                st = v.get("statistics", {})
+                t["videos"] += 1
+                t["views"] += int(st.get("viewCount", 0))
+                if "likeCount" in st:
+                    t["likes"] = (t["likes"] or 0) + int(st["likeCount"])
+                if "commentCount" in st:
+                    t["comments"] = (t["comments"] or 0) + int(st["commentCount"])
+        return {c: Engagement(**t) for c, t in totals.items() if t["videos"] > 0}
 
     def resolve_handle(self, handle: str) -> str | None:
         """@handle -> channel ID via channels.list(forHandle) (1 quota unit)."""
@@ -164,6 +202,15 @@ class DemoProvider:
             source_timestamp=datetime(day.year, day.month, day.day, 12, tzinfo=UTC),
             hidden_subscriber_count=False,
         )
+
+    def engagement_for(self, channel_id: str, day: date) -> Engagement:
+        snap = self.snapshot_for(channel_id, "", day)
+        epoch = date(2026, 1, 1)
+        t = (day - epoch).days
+        views = int(snap.subscriber_count * (0.15 + 0.25 * _unit(channel_id + ":reach")))
+        rate = 0.015 + 0.045 * _unit(channel_id + ":likerate") + 0.006 * math.sin(t / 9)
+        likes = int(views * max(0.005, rate))
+        return Engagement(videos=10, views=views, likes=likes, comments=int(likes * 0.08))
 
     def is_trending(self, channel_id: str, day: date) -> bool:
         return _unit(f"{channel_id}:trend:{day.isoformat()}") < 0.05

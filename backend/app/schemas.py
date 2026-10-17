@@ -80,6 +80,8 @@ class AssetOut(BaseModel):
     trades_24h: int
     turnover_24h: int  # 거래대금 (sum of quantity × price, 24h)
     market_cap: int  # 시가총액 (current price × shares outstanding)
+    popularity_score: int | None  # 인기도 1..50
+    popularity_updated_at: datetime | None
     fee_bps: int  # fee rate a new order would get right now
     fee_surcharge_reason: str | None  # 'new_video' | 'celebrity_new_channel'
     fee_surcharge_until: datetime | None
@@ -244,6 +246,23 @@ class ListingRequestIn(Strict):
 class MarkReadIn(Strict):
     ids: list[int] | None = Field(default=None, max_length=500)
     all: bool = False
+
+
+class AutoOrderIn(Strict):
+    asset_id: int = Field(gt=0)
+    side: Literal["buy", "sell"]
+    trigger_condition: Literal["lte", "gte"]  # fire when price <= / >= trigger_price
+    trigger_price: int = Field(gt=0)
+    order_type: Literal["market", "limit"]
+    limit_price: int | None = Field(default=None, gt=0)
+    quantity: int = Field(gt=0, le=100_000)
+    days: int = Field(default=7, ge=1, le=30)
+
+
+class DonationIn(Strict):
+    recipient: str = Field(min_length=3, max_length=20)
+    amount: int = Field(gt=0, le=500_000)
+    message: str | None = Field(default=None, max_length=200)
 
 
 class ReasonIn(Strict):

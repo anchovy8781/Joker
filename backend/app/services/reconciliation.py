@@ -25,7 +25,7 @@ def reconcile(db: Session) -> ReconciliationRun:
     for uid, reserved, expected in db.execute(text(
         "SELECT a.user_id, a.reserved_cash, COALESCE(SUM(o.reserved_cash), 0) "
         "FROM accounts a LEFT JOIN orders o ON o.user_id = a.user_id AND o.side = 'buy' "
-        "AND o.status IN ('open','partially_filled') GROUP BY a.user_id, a.reserved_cash"
+        "AND o.status IN ('scheduled','open','partially_filled') GROUP BY a.user_id, a.reserved_cash"
     )).all():
         if reserved != expected:
             mismatches.append({"check": "reserved_cash", "user_id": uid, "reserved": reserved,
@@ -35,7 +35,7 @@ def reconcile(db: Session) -> ReconciliationRun:
     for uid, aid, reserved, expected in db.execute(text(
         "SELECT p.user_id, p.asset_id, p.reserved_quantity, COALESCE(SUM(o.remaining_quantity), 0) "
         "FROM positions p LEFT JOIN orders o ON o.user_id = p.user_id AND o.asset_id = p.asset_id "
-        "AND o.side = 'sell' AND o.status IN ('open','partially_filled') "
+        "AND o.side = 'sell' AND o.status IN ('scheduled','open','partially_filled') "
         "GROUP BY p.user_id, p.asset_id, p.reserved_quantity"
     )).all():
         if reserved != expected:
@@ -83,6 +83,9 @@ def reconcile(db: Session) -> ReconciliationRun:
     expected_cash = sum(totals.values())
     if total_cash != expected_cash:
         mismatches.append({"check": "economy_total", "total_cash": total_cash, "expected": expected_cash})
+    if totals.get("donation_sent", 0) + totals.get("donation_received", 0) != 0:
+        mismatches.append({"check": "donation_zero_sum", "sent": totals.get("donation_sent", 0),
+                           "received": totals.get("donation_received", 0)})
     if totals.get("trade_buy", 0) + totals.get("trade_sell", 0) != 0:
         mismatches.append({"check": "trade_cash_zero_sum", "buy": totals.get("trade_buy", 0),
                            "sell": totals.get("trade_sell", 0)})

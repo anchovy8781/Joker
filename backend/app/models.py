@@ -104,7 +104,7 @@ class LedgerEntry(Base):
         CheckConstraint("amount <> 0", name="ck_ledger_amount_nonzero"),
         CheckConstraint(
             "entry_type IN ('signup_grant','trade_buy','trade_sell','trade_fee',"
-            "'admin_adjustment','correction','mission_reward')",
+            "'admin_adjustment','correction','mission_reward','donation_sent','donation_received')",
             name="ck_ledger_entry_type",
         ),
         Index(
@@ -160,6 +160,7 @@ class Channel(Base):
     hidden_subscriber_count: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
+    uploads_playlist_id: Mapped[str | None] = mapped_column(String(64))
     requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     request_note: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = _now()
@@ -173,6 +174,8 @@ class MarketAsset(Base):
         CheckConstraint("current_price >= 1", name="ck_assets_cur_price"),
         CheckConstraint("shares_outstanding > 0", name="ck_assets_shares"),
         CheckConstraint("trading_status IN ('active','halted')", name="ck_assets_trading_status"),
+        CheckConstraint("popularity_score IS NULL OR popularity_score BETWEEN 1 AND 50",
+                        name="ck_assets_popularity"),
     )
 
     id: Mapped[int] = _pk()
@@ -189,6 +192,8 @@ class MarketAsset(Base):
     # Surcharge fee windows: newly listed celebrity channel / recent new video upload.
     celebrity_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     new_video_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    popularity_score: Mapped[int | None] = mapped_column(Integer)  # 1..50
+    popularity_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_at: Mapped[datetime] = _now()
 
@@ -228,7 +233,7 @@ class Order(Base):
         CheckConstraint("reserved_cash >= 0", name="ck_orders_reserved_cash"),
         CheckConstraint("fee_bps >= 0 AND fee_bps <= 1000", name="ck_orders_fee_bps"),
         CheckConstraint(
-            "status IN ('open','partially_filled','filled','canceled','rejected')",
+            "status IN ('scheduled','open','partially_filled','filled','canceled','rejected')",
             name="ck_orders_status",
         ),
         UniqueConstraint("user_id", "idempotency_key", name="uq_orders_user_idempotency"),
@@ -247,6 +252,8 @@ class Order(Base):
     reserved_cash: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     # Fee rate fixed when the order is accepted; fills charge this rate.
     fee_bps: Mapped[int] = mapped_column(Integer, nullable=False, server_default="20")
+    # Worst acceptable price for market orders (reservations are sized from it).
+    protect_price: Mapped[int | None] = mapped_column(BigInteger)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     status_reason: Mapped[str | None] = mapped_column(String(200))
     idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -311,7 +318,8 @@ class ChannelMetric(Base):
     __tablename__ = "channel_metrics"
     __table_args__ = (
         CheckConstraint(
-            "metric_type IN ('subscriber_count','view_count','video_count')", name="ck_metrics_type"
+            "metric_type IN ('subscriber_count','view_count','video_count','recent_like_count',"
+            "'recent_view_count','recent_comment_count')", name="ck_metrics_type"
         ),
         CheckConstraint("metric_value >= 0", name="ck_metrics_value"),
         CheckConstraint("source IN ('youtube_api','demo')", name="ck_metrics_source"),
@@ -570,3 +578,69 @@ class UserMission(Base):
     reward: Mapped[int] = mapped_column(BigInteger, nullable=False)
     ledger_entry_id: Mapped[int] = mapped_column(ForeignKey("ledger_entries.id"), nullable=False)
     completed_at: Mapped[datetime] = _now()
+
+
+class PopularityHistory(Base):
+    __tablename__ = "popularity_history"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "score_date", name="uq_popularity_asset_date"),
+        CheckConstraint("score BETWEEN 1 AND 50", name="ck_popularity_score"),
+    )
+
+    id: Mapped[int] = _pk()
+    asset_id: Mapped[int] = mapped_column(ForeignKey("market_assets.id"), nullable=False)
+    score_date: Mapped[date] = mapped_column(Date, nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    components_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    created_at: Mapped[datetime] = _now()
+
+
+class AutoOrder(Base):
+    """Price-triggered order (지정가 자동 매수/매도): when the market price reaches the
+    trigger, a normal order is submitted through the regular engine."""
+
+    __tablename__ = "auto_orders"
+    __table_args__ = (
+        CheckConstraint("side IN ('buy','sell')", name="ck_auto_side"),
+        CheckConstraint("trigger_condition IN ('lte','gte')", name="ck_auto_condition"),
+        CheckConstraint("trigger_price > 0", name="ck_auto_trigger_price"),
+        CheckConstraint("order_type IN ('market','limit')", name="ck_auto_order_type"),
+        CheckConstraint("(order_type = 'limit') = (limit_price IS NOT NULL)", name="ck_auto_limit_price"),
+        CheckConstraint("quantity > 0", name="ck_auto_quantity"),
+        CheckConstraint("status IN ('active','triggered','canceled','failed','expired')", name="ck_auto_status"),
+        Index("ix_auto_orders_active", "asset_id", "status"),
+    )
+
+    id: Mapped[int] = _pk()
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("market_assets.id"), nullable=False)
+    side: Mapped[str] = mapped_column(String(4), nullable=False)
+    trigger_condition: Mapped[str] = mapped_column(String(4), nullable=False)
+    trigger_price: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    order_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    limit_price: Mapped[int | None] = mapped_column(BigInteger)
+    quantity: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, server_default="active")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"))
+    failure_reason: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = _now()
+    triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Donation(Base):
+    __tablename__ = "donations"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_donations_amount"),
+        CheckConstraint("sender_id <> recipient_id", name="ck_donations_not_self"),
+        Index("ix_donations_recipient_created", "recipient_id", "created_at"),
+        Index("ix_donations_sender_created", "sender_id", "created_at"),
+    )
+
+    id: Mapped[int] = _pk()
+    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message: Mapped[str | None] = mapped_column(String(100))
+    transaction_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True)
+    created_at: Mapped[datetime] = _now()

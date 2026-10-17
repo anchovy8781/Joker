@@ -12,9 +12,9 @@ from datetime import date
 
 from sqlalchemy import select
 
-from app.db import session_factory
-from app.models import Channel, MarketAsset
-from app.services import collector, jobs, pricing, reconciliation, risk
+from app.db import run_in_transaction, session_factory
+from app.models import Channel, MarketAsset, Order
+from app.services import auto_orders, collector, jobs, market_hours, orders, pricing, reconciliation, risk
 from app.services.listing import requote_market_maker
 from app.services.youtube import get_api_provider
 
@@ -58,6 +58,30 @@ def _requote(db, payload):
     for aid in ids:
         placed += requote_market_maker(db, aid)["placed"]
     return {"assets": len(ids), "orders_placed": placed}
+
+
+@jobs.handler("activate_reservations")
+def _activate(db, payload):
+    """At session open, submit reservations to the book oldest-first, one transaction each."""
+    if not market_hours.is_open(pricing.utcnow()):
+        return {"market_open": False, "activated": 0}
+    ids = db.execute(select(Order.id).where(Order.status == "scheduled").order_by(Order.id)).scalars().all()
+    if ids:
+        _requote(db, {})  # put market-maker liquidity on the book before reservations arrive
+    db.commit()
+    activated = 0
+    for oid in ids:
+        run_in_transaction(db, lambda s, oid=oid: orders.activate_scheduled(s, oid))
+        activated += 1
+    if ids:
+        auto_orders.evaluate(db)
+        db.commit()
+    return {"market_open": True, "activated": activated}
+
+
+@jobs.handler("auto_orders")
+def _auto(db, payload):
+    return auto_orders.evaluate(db)
 
 
 def main() -> None:

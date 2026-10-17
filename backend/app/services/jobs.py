@@ -111,6 +111,8 @@ def schedule_periodic(db: Session, now: datetime | None = None) -> list[int]:
          datetime.combine(today, datetime.min.time(), now.tzinfo) + timedelta(hours=2)),
         ("risk_scan", {}, f"risk:{now.strftime('%Y-%m-%dT%H')}:{now.minute // 15}", now),
         ("mm_requote", {}, f"mm:{now.strftime('%Y-%m-%dT%H')}:{now.minute // 10}", now),
+        ("activate_reservations", {}, f"activate:{now.strftime('%Y-%m-%dT%H:%M')}", now),
+        ("auto_orders", {}, f"auto:{now.strftime('%Y-%m-%dT%H:%M')}", now),
     ]
     for job_type, payload, key, run_at in plan:
         jid = enqueue(db, job_type, payload, dedup_key=key, run_at=run_at)

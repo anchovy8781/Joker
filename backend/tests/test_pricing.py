@@ -186,7 +186,7 @@ def test_youtube_api_provider_parses_official_fields(db, monkeypatch):
     def handler(req: httpx.Request):
         seen.append(req.url.path)
         if req.url.path.endswith("/channels"):
-            assert req.url.params["part"] == "snippet,statistics"
+            assert req.url.params["part"] == "snippet,statistics,contentDetails"
             return httpx.Response(200, json={"items": [{
                 "id": ch.youtube_channel_id,
                 "snippet": {"title": "Official Title", "customUrl": "@official",

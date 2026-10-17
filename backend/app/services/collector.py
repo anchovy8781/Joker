@@ -16,7 +16,8 @@ from app.config import get_settings
 from app.models import Channel, ChannelMetric, MarketAsset, MarketEvent
 from app.security import utcnow
 from app.services.audit import write_audit
-from app.services.listing import auto_halt, auto_resume_if_safe, store_snapshot
+from app.services import popularity
+from app.services.listing import auto_halt, auto_resume_if_safe, store_engagement, store_snapshot
 from app.services.notify import notify_holders
 from app.services.pricing import compute_features, is_stale
 from app.services.youtube import DemoProvider, ProviderError, YouTubeDataAPIProvider
@@ -116,6 +117,7 @@ def collect_all(db: Session, now: datetime | None = None,
         if ch.data_source != "demo":
             continue
         store_snapshot(db, ch, demo.snapshot_for(ch.youtube_channel_id, ch.title, day), now)
+        store_engagement(db, ch, demo.engagement_for(ch.youtube_channel_id, day), now)
         ch.last_data_update_at = now
         ch.data_quality_status = "ok"
         result["demo_updated"] += 1
@@ -134,6 +136,8 @@ def collect_all(db: Session, now: datetime | None = None,
                         result["api_missing"].append(ch.youtube_channel_id)
                         continue
                     store_snapshot(db, ch, snap, now)
+                    if snap.uploads_playlist_id:
+                        ch.uploads_playlist_id = snap.uploads_playlist_id
                     ch.title = snap.title
                     ch.thumbnail_url = snap.thumbnail_url
                     ch.handle = snap.handle
@@ -141,6 +145,13 @@ def collect_all(db: Session, now: datetime | None = None,
                     ch.last_data_update_at = now
                     ch.data_quality_status = "low_confidence" if snap.hidden_subscriber_count else "ok"
                     result["api_updated"] += 1
+                playlists = {c.youtube_channel_id: c.uploads_playlist_id for c in api_channels
+                             if c.uploads_playlist_id and c.data_quality_status != "unavailable"}
+                if playlists:
+                    by_id = {c.youtube_channel_id: c for c in api_channels}
+                    for cid, eng in api.fetch_engagement(playlists).items():
+                        store_engagement(db, by_id[cid], eng, now)
+                    result["engagement_updated"] = len(playlists)
                 for region in get_settings().youtube_trending_regions:
                     trending_api |= api.fetch_trending_channels(region)
             except ProviderError as exc:
@@ -168,6 +179,7 @@ def collect_all(db: Session, now: datetime | None = None,
             if detect_new_video(db, ch, asset, day, now):
                 result.setdefault("new_videos", []).append(asset.symbol)
 
+    result["popularity"] = popularity.recompute_all(db, now)
     write_audit(db, "data.collect", metadata={k: v for k, v in result.items()})
     db.flush()
     return result

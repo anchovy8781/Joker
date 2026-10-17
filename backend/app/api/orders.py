@@ -13,7 +13,7 @@ from app.models import Order, Trade, User
 from app.schemas import OrderIn, OrderOut, PlaceOrderOut, TradeOut
 from app.security import hit_rate_limit, require_user
 from app.services import orders as engine
-from app.services import risk
+from app.services import auto_orders, risk
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 log = logging.getLogger("yex.api.orders")
@@ -41,10 +41,12 @@ def place(body: OrderIn, response: Response, user: User = Depends(require_user),
             select(Trade).where((Trade.buy_order_id == result.order.id) | (Trade.sell_order_id == result.order.id))
             .order_by(Trade.id)).scalars()]
     elif result.trades:
-        # Abuse checks run after the trade commits, in their own transaction; failures are logged only.
+        # Abuse checks and auto-order triggers run after the trade commits, in their own
+        # transaction; failures are logged only.
         rdb = session_factory()()
         try:
             risk.check_trades(rdb, result.trades)
+            auto_orders.evaluate(rdb, asset_id=body.asset_id)
             rdb.commit()
         except Exception:
             rdb.rollback()
@@ -57,11 +59,11 @@ def place(body: OrderIn, response: Response, user: User = Depends(require_user),
 
 @router.get("", response_model=list[OrderOut])
 def list_orders(user: User = Depends(require_user), db: Session = Depends(get_db),
-                status: Literal["open", "partially_filled", "filled", "canceled", "rejected", "active"] | None = None,
+                status: Literal["scheduled", "open", "partially_filled", "filled", "canceled", "rejected", "active"] | None = None,
                 asset_id: int | None = None, limit: int = Query(default=100, ge=1, le=500)):
     q = select(Order).where(Order.user_id == user.id)
     if status == "active":
-        q = q.where(Order.status.in_(engine.RESTING))
+        q = q.where(Order.status.in_(engine.RESERVING))
     elif status:
         q = q.where(Order.status == status)
     if asset_id:

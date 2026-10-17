@@ -11,6 +11,9 @@ os.environ["YEX_YOUTUBE_API_KEY"] = ""
 os.environ["YEX_RL_REGISTER_PER_IP"] = "[1000, 3600]"
 os.environ["YEX_RL_LOGIN_PER_IP"] = "[1000, 300]"
 os.environ["YEX_RL_ORDERS_PER_USER"] = "[10000, 60]"
+# Tests run at any time of day: sessions/request windows are switched on per test where needed.
+os.environ["YEX_MARKET_HOURS_ENABLED"] = "false"
+os.environ["YEX_LISTING_REQUEST_OPEN_HOUR_KST"] = "0"
 
 import pytest
 from alembic import command
@@ -25,7 +28,7 @@ from app.services.listing import approve_listing, get_market_maker, register_cha
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TABLES = [
-    "user_missions", "notifications", "chat_messages", "trades", "ledger_entries", "audit_logs", "orders", "positions", "accounts", "sessions",
+    "auto_orders", "donations", "popularity_history", "user_missions", "notifications", "chat_messages", "trades", "ledger_entries", "audit_logs", "orders", "positions", "accounts", "sessions",
     "market_bars", "channel_metrics", "market_events", "price_updates", "risk_events", "appeals",
     "reports", "announcements", "jobs", "rate_limits", "reconciliation_runs", "api_quota_usage",
     "market_assets", "channels", "users",

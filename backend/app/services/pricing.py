@@ -1,4 +1,8 @@
-"""Hybrid price engine (formula version v1).
+"""Hybrid price engine (formula version v2).
+
+v2 refinements: engagement (like-rate change on recent uploads) and popularity momentum
+inside the fundamental score, exponentially time-decayed order flow with a liquidity
+confidence (thin markets move less), and a popularity-level term in sentiment.
 
 raw_return   = 0.50 * fundamental_return + 0.30 * flow_return + 0.20 * sentiment_return
 daily_return = clamp(raw_return, -0.08, +0.08)
@@ -36,11 +40,18 @@ from app.services.audit import write_audit
 
 log = logging.getLogger("yex.pricing")
 
-FORMULA_VERSION = "hybrid-v1"
+FORMULA_VERSION = "hybrid-v2"
 WEIGHTS = {"fundamental": Decimal("0.50"), "flow": Decimal("0.30"), "sentiment": Decimal("0.20")}
 LIMITS = {"fundamental": 0.04, "flow": 0.03, "sentiment": 0.02}
 DAILY_CLAMP = Decimal("0.08")
-FUNDAMENTAL_MIX = {"subscribers": 0.4, "views": 0.4, "trend": 0.2}
+# v2 adds engagement (like-rate change on recent uploads) and popularity momentum.
+FUNDAMENTAL_MIX = {"subscribers": 0.30, "views": 0.30, "trend": 0.15, "engagement": 0.15, "popularity": 0.10}
+LIKE_RATE_SCALE = 0.005  # +0.5%p like rate in a week ≈ tanh(1)
+POPULARITY_SCALE = 5.0  # +5 popularity points in a week ≈ tanh(1)
+POPULARITY_LEVEL_SCALE = 10.0
+POPULARITY_SENTIMENT_WEIGHT = 0.3
+FLOW_HALF_LIFE_HOURS = 6.0  # recent executions count more than old ones
+FLOW_LIQUIDITY_FRACTION = 0.0005  # turnover of 0.05% of market cap → full flow confidence
 SUB_SCALE = 0.01  # 1%/week relative sub growth ≈ tanh(1) score
 VIEW_SCALE = 0.03
 TREND_SCALE = 0.01
@@ -65,6 +76,8 @@ class Features:
     view_g28w: float | None
     view_g7_prev: float | None  # growth of the week before (days -14..-7)
     confidence: float
+    like_rate: float | None = None  # likes / views over recent uploads, today
+    like_rate_prev: float | None = None  # same, 7 days ago
 
 
 def _series(db: Session, channel: Channel, metric_type: str, start: date) -> dict[date, int]:
@@ -102,6 +115,13 @@ def compute_features(db: Session, channel: Channel, as_of: date) -> Features:
     sub_g7, view_g7 = _growth(s0, s7), _growth(v0, v7)
     sub_g28 = _growth(s0, s28)
     view_g28 = _growth(v0, v28)
+    likes = _series(db, channel, "recent_like_count", start)
+    rviews = _series(db, channel, "recent_view_count", start)
+
+    def like_rate(day: date) -> float | None:
+        lk, vw = _value_at(likes, day), _value_at(rviews, day)
+        return lk / vw if lk is not None and vw else None
+
     has_7d = view_g7 is not None
     has_28d = view_g28 is not None
     hidden = channel.hidden_subscriber_count
@@ -120,10 +140,13 @@ def compute_features(db: Session, channel: Channel, as_of: date) -> Features:
         view_g28w=view_g28 / 4 if view_g28 is not None else None,
         view_g7_prev=_growth(v7, v14),
         confidence=confidence,
+        like_rate=like_rate(as_of),
+        like_rate_prev=like_rate(as_of - timedelta(days=7)),
     )
 
 
-def fundamental_return(f: Features, market_sub_median: float, market_view_median: float) -> tuple[float, dict]:
+def fundamental_return(f: Features, market_sub_median: float, market_view_median: float,
+                       pop_now: int | None = None, pop_prev: int | None = None) -> tuple[float, dict]:
     """Growth relative to the market median (keeps the market roughly zero-sum on fundamentals)."""
     if not f.has_7d:
         return 0.0, {"reason": "insufficient_history"}
@@ -140,21 +163,34 @@ def fundamental_return(f: Features, market_sub_median: float, market_view_median
             parts.append((f.view_g7 - f.view_g28w) / 3)
         if parts:
             trend_score = math.tanh(sum(parts) / len(parts) / TREND_SCALE)
-    mix = dict(FUNDAMENTAL_MIX)
-    if f.sub_g7 is None:  # hidden subscriber count: re-weight onto views
-        mix = {"subscribers": 0.0, "views": 0.8, "trend": 0.2}
-    score = mix["subscribers"] * sub_score + mix["views"] * view_score + mix["trend"] * trend_score
+    engagement_score = None
+    if f.like_rate is not None and f.like_rate_prev is not None:
+        engagement_score = math.tanh((f.like_rate - f.like_rate_prev) / LIKE_RATE_SCALE)
+    popularity_score = None
+    if pop_now is not None and pop_prev is not None:
+        popularity_score = math.tanh((pop_now - pop_prev) / POPULARITY_SCALE)
+    parts = {"subscribers": sub_score if f.sub_g7 is not None else None, "views": view_score,
+             "trend": trend_score, "engagement": engagement_score, "popularity": popularity_score}
+    # Missing inputs (hidden subscribers/likes, no popularity history yet) give their weight
+    # to the remaining components instead of counting as zero.
+    mix = {k: w for k, w in FUNDAMENTAL_MIX.items() if parts[k] is not None}
+    total_w = sum(mix.values())
+    score = sum(w / total_w * parts[k] for k, w in mix.items())
     ret = clamp(LIMITS["fundamental"] * score * f.confidence, -LIMITS["fundamental"], LIMITS["fundamental"])
     return ret, {
         "sub_score": round(sub_score, 6),
         "view_score": round(view_score, 6),
         "trend_score": round(trend_score, 6),
+        "engagement_score": None if engagement_score is None else round(engagement_score, 6),
+        "popularity_score": None if popularity_score is None else round(popularity_score, 6),
+        "weights": {k: round(w / total_w, 4) for k, w in mix.items()},
         "score": round(score, 6),
         "confidence": f.confidence,
     }
 
 
-def flow_return(db: Session, asset_id: int, start: datetime, end: datetime) -> tuple[float, dict]:
+def flow_return(db: Session, asset_id: int, start: datetime, end: datetime,
+                market_cap: int | None = None) -> tuple[float, dict]:
     """D = (buy - sell) / (buy + sell + eps) over executed trades in (start, end].
 
     Buy/sell is the aggressor (taker) side. Each trade counts once because successive
@@ -168,10 +204,14 @@ def flow_return(db: Session, asset_id: int, start: datetime, end: datetime) -> t
         and_(Trade.taker_side == "sell", seller.role == "system"),
     )
     notional = Trade.quantity * Trade.execution_price
+    # Exponential time decay: an execution FLOW_HALF_LIFE_HOURS old counts half.
+    decay = func.power(0.5, func.extract("epoch", end - Trade.executed_at) / (FLOW_HALF_LIFE_HOURS * 3600))
     q = (
         select(
             func.coalesce(func.sum(case((Trade.taker_side == "buy", notional), else_=0)), 0),
             func.coalesce(func.sum(case((Trade.taker_side == "sell", notional), else_=0)), 0),
+            func.coalesce(func.sum(case((Trade.taker_side == "buy", notional * decay), else_=0)), 0),
+            func.coalesce(func.sum(case((Trade.taker_side == "sell", notional * decay), else_=0)), 0),
             func.count(Trade.id),
             func.count(
                 func.distinct(case((Trade.taker_side == "buy", Trade.buyer_id), else_=Trade.seller_id))
@@ -186,11 +226,17 @@ def flow_return(db: Session, asset_id: int, start: datetime, end: datetime) -> t
             ~taker_is_system,
         )
     )
-    buy_n, sell_n, n_trades, n_traders = db.execute(q).one()
+    buy_n, sell_n, buy_w, sell_w, n_trades, n_traders = db.execute(q).one()
     buy_n, sell_n = Decimal(buy_n), Decimal(sell_n)
-    d = (buy_n - sell_n) / (buy_n + sell_n + FLOW_EPSILON)
+    buy_w, sell_w = Decimal(str(buy_w)), Decimal(str(sell_w))
+    d = (buy_w - sell_w) / (buy_w + sell_w + FLOW_EPSILON)
     d = clamp(d, Decimal(-1), Decimal(1))
-    conf = min(1.0, n_traders / FLOW_FULL_CONFIDENCE_TRADERS)
+    trader_conf = min(1.0, n_traders / FLOW_FULL_CONFIDENCE_TRADERS)
+    liquidity_conf = 1.0
+    if market_cap:
+        # Thin markets move the price less: confidence grows with sqrt(turnover / threshold).
+        liquidity_conf = min(1.0, math.sqrt(float(buy_n + sell_n) / (FLOW_LIQUIDITY_FRACTION * market_cap)))
+    conf = trader_conf * liquidity_conf
     ret = clamp(float(d) * LIMITS["flow"] * conf, -LIMITS["flow"], LIMITS["flow"])
     return ret, {
         "buy_notional": int(buy_n),
@@ -198,11 +244,14 @@ def flow_return(db: Session, asset_id: int, start: datetime, end: datetime) -> t
         "imbalance": float(d),
         "trades": n_trades,
         "distinct_takers": n_traders,
+        "trader_confidence": trader_conf,
+        "liquidity_confidence": round(liquidity_conf, 6),
         "confidence": conf,
     }
 
 
-def sentiment_return(db: Session, asset_id: int, at: datetime) -> tuple[float, dict]:
+def sentiment_return(db: Session, asset_id: int, at: datetime, popularity: int | None = None,
+                     popularity_median: float | None = None) -> tuple[float, dict]:
     events = db.execute(
         select(MarketEvent).where(
             MarketEvent.asset_id == asset_id,
@@ -210,10 +259,16 @@ def sentiment_return(db: Session, asset_id: int, at: datetime) -> tuple[float, d
             MarketEvent.expires_at > at,
         )
     ).scalars().all()
-    total = clamp(sum(float(e.event_score) for e in events), -1.0, 1.0)
+    event_total = sum(float(e.event_score) for e in events)
+    pop_term = 0.0
+    if popularity is not None and popularity_median is not None:
+        # Popular channels (vs. the market median) carry a mild positive mood, unpopular a negative one.
+        pop_term = POPULARITY_SENTIMENT_WEIGHT * math.tanh((popularity - popularity_median) / POPULARITY_LEVEL_SCALE)
+    total = clamp(event_total + pop_term, -1.0, 1.0)
     ret = clamp(total * LIMITS["sentiment"], -LIMITS["sentiment"], LIMITS["sentiment"])
     return ret, {
         "score": total,
+        "popularity_term": round(pop_term, 6),
         "events": [{"id": e.id, "type": e.event_type, "score": float(e.event_score)} for e in events],
     }
 
@@ -303,6 +358,13 @@ def run_daily_update(db: Session, effective: date, now: datetime | None = None) 
     return summary
 
 
+def _popularity_median(db: Session) -> float | None:
+    scores = [s for s in db.execute(select(MarketAsset.popularity_score).join(
+        Channel, Channel.id == MarketAsset.channel_id).where(
+        Channel.listing_status == "listed", MarketAsset.popularity_score.is_not(None))).scalars()]
+    return statistics.median(scores) if len(scores) >= 3 else None
+
+
 def _exists(db: Session, asset_id: int, effective: date) -> bool:
     return db.execute(
         select(PriceUpdate.id).where(
@@ -345,10 +407,16 @@ def _update_asset(db, asset_id, effective, now, medians, auto_halt) -> str:
     window_start = last.flow_window_end if last else asset.created_at
     window_end = now
 
+    from app.services.popularity import score_on  # local import avoids a cycle
+
     feats = compute_features(db, channel, effective)
-    fund, fund_info = fundamental_return(feats, *medians)
-    flow, flow_info = flow_return(db, asset_id, window_start, window_end)
-    sent, sent_info = sentiment_return(db, asset_id, now)
+    pop_now = asset.popularity_score
+    pop_prev = score_on(db, asset_id, effective - timedelta(days=7))
+    pop_median = _popularity_median(db)
+    fund, fund_info = fundamental_return(feats, *medians, pop_now=pop_now, pop_prev=pop_prev)
+    flow, flow_info = flow_return(db, asset_id, window_start, window_end,
+                                  market_cap=asset.reference_price * asset.shares_outstanding)
+    sent, sent_info = sentiment_return(db, asset_id, now, pop_now, pop_median)
     raw, daily = combine(fund, flow, sent)
     new = next_price(old, daily)
 
@@ -363,6 +431,7 @@ def _update_asset(db, asset_id, effective, now, medians, auto_halt) -> str:
             "features": asdict(feats), "market_medians": list(medians),
             "fundamental": fund_info, "flow": flow_info, "sentiment": sent_info,
             "base_price": old, "data_source": channel.data_source,
+            "popularity": {"now": pop_now, "7d_ago": pop_prev, "market_median": pop_median},
         },
     ))
     db.flush()  # UNIQUE(asset_id, effective_date) guards against double application here
