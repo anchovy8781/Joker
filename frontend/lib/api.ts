@@ -79,6 +79,7 @@ export type Channel = {
   thumbnail_url: string | null;
   category: string | null;
   data_source: "youtube_api" | "demo";
+  listed_at: string | null;
   data_quality_status: string;
   last_data_update_at: string | null;
   hidden_subscriber_count: boolean;
@@ -108,6 +109,7 @@ export type Asset = {
   fee_surcharge_until: string | null;
   freshness: Freshness;
   is_demo: boolean;
+  sparkline: number[];
 };
 
 export type Bar = { timestamp: string; open_price: number; high_price: number; low_price: number; close_price: number; volume: number };
@@ -165,8 +167,8 @@ export type Notification = { id: number; kind: string; title: string; body: stri
 export type Mission = { code: string; title: string; description: string; reward: number; period: "once" | "daily"; target: number; progress: number; claimed: boolean; claimable: boolean };
 export type ChatMessage = { id: number; room: string; username: string; body: string; created_at: string };
 export type ExpertPick = { rank: number; expert_buyers: number; net_buy_notional: number; asset: Asset };
-export type ListingRequest = { id: number; youtube_channel_id: string; title: string; listing_status: string; created_at: string; note: string | null };
+export type ListingRequest = { id: number; youtube_channel_id: string; title: string; listing_status: string; created_at: string; note: string | null; fee_paid: number };
 export type AutoOrder = { id: number; asset_id: number; side: "buy" | "sell"; trigger_condition: "lte" | "gte"; trigger_price: number; order_type: "market" | "limit"; limit_price: number | null; quantity: number; status: string; expires_at: string; order_id: number | null; failure_reason: string | null; created_at: string };
 export type MarketHours = { open: boolean; enforced: boolean; session_open: string; session_close: string; next_open: string; next_close: string; schedule: { weekday: string; open: string; close: string }[]; note: string };
 export type DonationBox = { box: { daily_limit: number; received_today: number; sent_today: number; receive_remaining: number; send_remaining: number; full: boolean }; history: { id: number; amount: number; message: string | null; created_at: string; sender: string; recipient: string; outgoing: boolean }[] };
-export type ListingWindow = { open: boolean; opens_at: string | null; next_opens_at: string; limit: number; used: number; remaining: number; limit_reached: boolean };
+export type ListingWindow = { open: boolean; opens_at: string | null; next_opens_at: string; limit: number; used: number; remaining: number; limit_reached: boolean; listing_fee: number };

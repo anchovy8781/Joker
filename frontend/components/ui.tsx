@@ -5,10 +5,10 @@ import { direction, pct, signed, timeAgo } from "@/lib/format";
 
 export function Card({ title, right, children, className = "" }: { title?: ReactNode; right?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`min-w-0 rounded-xl border border-line bg-panel ${className}`}>
+    <section className={`min-w-0 rounded-2xl bg-panel ${className}`}>
       {(title || right) && (
-        <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-text">{title}</h2>
+        <header className="flex items-center justify-between gap-2 px-4 pb-1 pt-4">
+          <h2 className="text-base font-bold text-text">{title}</h2>
           {right}
         </header>
       )}
@@ -81,7 +81,7 @@ export function TradingBadge({ status, reason }: { status: string; reason?: stri
 
 export function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="rounded-xl border border-line bg-panel p-4">
+    <div className="rounded-2xl bg-panel p-4">
       <div className="text-xs text-muted">{label}</div>
       <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-text">{value}</div>
       {sub && <div className="mt-1 text-xs">{sub}</div>}

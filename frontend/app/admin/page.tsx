@@ -71,15 +71,15 @@ function Listing() {
     <div className="space-y-4">
       <Card title="채널 등록 (상장 심사 대기열에 추가)">
         <div className="grid gap-2 md:grid-cols-4">
-          <input className="input" placeholder="채널 ID (UC… 또는 DEMO…)" value={form.youtube_channel_id} onChange={(e) => setForm({ ...form, youtube_channel_id: e.target.value })} />
-          <input className="input" placeholder="표시 이름" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          <input className="input" placeholder="@핸들, 채널 주소 또는 ID" value={form.youtube_channel_id} onChange={(e) => setForm({ ...form, youtube_channel_id: e.target.value })} />
+          <input className="input" placeholder="표시 이름 (실제 채널은 자동)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           <select className="input" value={form.data_source} onChange={(e) => setForm({ ...form, data_source: e.target.value })}>
             <option value="youtube_api">실제 (YouTube API)</option>
             <option value="demo">데모 데이터</option>
           </select>
-          <button className="btn-primary" onClick={() => run("/api/admin/channels", form, reload)}>등록</button>
+          <button className="btn-primary" onClick={() => run("/api/admin/channels", { ...form, title: form.title.trim() || null }, reload)}>등록</button>
         </div>
-        <p className="mt-2 text-xs text-muted">실제 채널은 첫 API 수집으로 데이터가 검증되기 전까지 거래 정지 상태로 상장됩니다.</p>
+        <p className="mt-2 text-xs text-muted">핸들만 넣으면 채널 ID와 이름을 자동으로 찾아요. 승인할 때 심볼·가격·주식 수를 비워두면 구독자 수 기준 추천값으로 상장돼요. 실제 채널은 첫 API 수집으로 데이터가 검증되기 전까지 거래 정지 상태로 상장됩니다.</p>
       </Card>
       {msg && <p className="text-sm">{msg}</p>}
       <Card title="채널 / 종목">
@@ -87,7 +87,7 @@ function Listing() {
           <div className="-mx-4 overflow-x-auto px-4"><table className="table">
             <thead><tr><th>채널</th><th>출처</th><th>상장</th><th>데이터</th><th>종목</th><th>조치</th></tr></thead>
             <tbody>{rows.map((c) => {
-              const ap = approve[c.id] ?? { symbol: "", price: "10000", shares: "1000000", celebrity: false };
+              const ap = approve[c.id] ?? { symbol: "", price: "", shares: "", celebrity: false };
               return (
                 <tr key={c.id}>
                   <td><div className="max-w-[220px] truncate">{c.title}</div><div className="font-mono text-[10px] text-muted">{c.youtube_channel_id}</div>
@@ -101,11 +101,11 @@ function Listing() {
                   <td className="space-x-1">
                     {c.listing_status === "pending" && (
                       <span className="inline-flex flex-wrap gap-1">
-                        <input className="input w-20 py-1" placeholder="SYM" value={ap.symbol} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, symbol: e.target.value.toUpperCase() } })} />
-                        <input className="input w-24 py-1" value={ap.price} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, price: e.target.value } })} title="최초 가격" />
-                        <input className="input w-28 py-1" value={ap.shares} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, shares: e.target.value } })} title="발행 주식 수" />
+                        <input className="input w-20 py-1" placeholder="심볼 자동" value={ap.symbol} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, symbol: e.target.value.toUpperCase() } })} />
+                        <input className="input w-24 py-1" placeholder="가격 자동" value={ap.price} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, price: e.target.value } })} title="최초 가격" />
+                        <input className="input w-28 py-1" placeholder="주식 수 자동" value={ap.shares} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, shares: e.target.value } })} title="발행 주식 수" />
                         <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={ap.celebrity} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, celebrity: e.target.checked } })} />유명인 신규</label>
-                        <button className="btn-primary py-1" onClick={() => { const r = askReason("상장 승인"); if (r) run(`/api/admin/channels/${c.id}/approve`, { symbol: ap.symbol, initial_price: Number(ap.price), shares_outstanding: Number(ap.shares), reason: r, celebrity_new_channel: ap.celebrity }, reload); }}>승인</button>
+                        <button className="btn-primary py-1" onClick={() => { const r = askReason("상장 승인"); if (r) run(`/api/admin/channels/${c.id}/approve`, { symbol: ap.symbol || null, initial_price: ap.price ? Number(ap.price) : null, shares_outstanding: ap.shares ? Number(ap.shares) : null, reason: r, celebrity_new_channel: ap.celebrity }, reload); }}>승인</button>
                         <button className="btn-danger py-1" onClick={() => { const r = askReason("상장 거절"); if (r) run(`/api/admin/channels/${c.id}/reject`, { reason: r }, reload); }}>거절</button>
                       </span>
                     )}

@@ -5,14 +5,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "#0b0e13",
-        panel: "#121722",
-        panel2: "#171d2b",
-        line: "#232b3b",
-        muted: "#8b95a7",
-        text: "#e6eaf2",
-        up: "#22c55e", // always paired with ▲ and a +sign, never colour alone
-        down: "#ef4444", // always paired with ▼ and a −sign
+        bg: "#09090b",
+        panel: "#17181d",
+        panel2: "#212329",
+        line: "#2a2d35",
+        muted: "#8e94a3",
+        text: "#eceef3",
+        // Korean market convention: rises red, falls blue. Always paired with ▲/▼ and a sign.
+        up: "#f04452",
+        down: "#3d8bfd",
         accent: "#f59e0b",
       },
       fontFamily: {

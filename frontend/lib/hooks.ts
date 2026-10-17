@@ -29,7 +29,8 @@ export function useApi<T>(path: string | null, pollMs?: number) {
     alive.current = true;
     reload();
     if (!pollMs) return () => { alive.current = false; };
-    const t = setInterval(reload, pollMs);
+    // Skip polls while the tab/app is in the background.
+    const t = setInterval(() => { if (typeof document === "undefined" || !document.hidden) reload(); }, pollMs);
     return () => {
       alive.current = false;
       clearInterval(t);

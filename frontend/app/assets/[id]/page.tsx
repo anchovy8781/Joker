@@ -9,6 +9,8 @@ import { AutoOrderPanel } from "@/components/AutoOrderPanel";
 import { ChatBox } from "@/components/ChatBox";
 import { useMarketHours } from "@/components/MarketHoursBadge";
 import { PriceChart } from "@/components/PriceChart";
+import { ChannelAvatar } from "@/components/ChannelAvatar";
+import { LivePanel } from "@/components/LivePanel";
 import { Card, Change, DemoBadge, Empty, ErrorBox, FreshnessBadge, TradingBadge } from "@/components/ui";
 import type { Account, Asset, Bar, MetricPoint, Order, OrderBook, Position, Trade } from "@/lib/api";
 import { api } from "@/lib/api";
@@ -64,22 +66,23 @@ export default function AssetPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-mono text-2xl font-bold">{a.symbol}</h1>
+      <div className="flex items-center gap-3">
+        <ChannelAvatar src={a.channel.thumbnail_url} title={a.channel.title} seed={a.symbol} size={64} />
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-xl font-bold">{a.channel.title.replace(/^\[DEMO\]\s*/, "")}</h1>
+          <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted">
+            <span className="font-mono">{a.symbol}</span>
+            {a.channel.handle && <span>· {a.channel.handle}</span>}
             <DemoBadge isDemo={a.is_demo} />
             <TradingBadge status={a.trading_status} reason={a.halt_reason} />
             <FreshnessBadge f={a.freshness} />
           </div>
-          <p className="text-sm text-muted">{a.channel.title}{a.channel.category && ` · ${a.channel.category}`}</p>
         </div>
-        <div className="text-right">
-          <div className="font-mono text-3xl font-bold tabular-nums">{credits(a.current_price)}</div>
-          <Change value={a.change} percent={a.change_pct} />
-          <div className="text-xs text-muted">기준가 {credits(a.reference_price)} · 전일 {credits(a.previous_price)}</div>
-          <div className="text-xs text-muted">인기도 <b className="text-text">{a.popularity_score ?? "—"}</b>/50 · {popularityLabel(a.popularity_score)}</div>
-        </div>
+      </div>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-3xl font-bold tabular-nums">₩{credits(a.current_price)}</span>
+        <Change value={a.change} percent={a.change_pct} />
+        <span className="text-xs text-muted">기준가 {credits(a.reference_price)} · 전일 {credits(a.previous_price)} · 인기도 {a.popularity_score ?? "—"}/50 {popularityLabel(a.popularity_score)}</span>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Metric label="시가총액" value={`${compact(a.market_cap)}`} />
@@ -106,6 +109,7 @@ export default function AssetPage() {
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="space-y-4">
+          <LivePanel assetId={a.id} />
           <Card title="가격 차트" right={
             <div className="flex gap-1 text-xs">
               {(["1d", "1h"] as const).map((iv) => (
