@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ChannelPreview, type ChannelPreviewData } from "@/components/ChannelPreview";
 import { useAuth } from "@/components/AuthProvider";
 import { Card, Empty, LoginPrompt } from "@/components/ui";
 import { api, ApiError, type Account, type ListingRequest, type ListingWindow } from "@/lib/api";
@@ -19,6 +20,30 @@ export default function Listings() {
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [preview, setPreview] = useState<ChannelPreviewData | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewErr, setPreviewErr] = useState<string | null>(null);
+
+  // Look the channel up as the user types (debounced) so they see who they are listing.
+  useEffect(() => {
+    const ref = channel.trim();
+    setPreview(null);
+    setPreviewErr(null);
+    if (!user || ref.length < 2) return;
+    let alive = true;
+    const t = setTimeout(async () => {
+      setPreviewing(true);
+      try {
+        const p = await api<ChannelPreviewData>(`/api/listing-requests/preview?channel=${encodeURIComponent(ref)}`);
+        if (alive) setPreview(p);
+      } catch (err) {
+        if (alive) setPreviewErr(err instanceof ApiError ? err.message : "채널을 불러오지 못했어요");
+      } finally {
+        if (alive) setPreviewing(false);
+      }
+    }, 700);
+    return () => { alive = false; clearTimeout(t); };
+  }, [channel, user]);
   if (!ready) return <Empty>…</Empty>;
   if (!user) return <LoginPrompt />;
   const w = win.data;
@@ -32,7 +57,7 @@ export default function Listings() {
     try {
       await api("/api/listing-requests", { method: "POST", body: { channel, note: note || null } });
       setMsg("✓ 상장 요청이 접수되었습니다. 운영자 승인 후 상장됩니다.");
-      setChannel(""); setNote("");
+      setChannel(""); setNote(""); setPreview(null);
       mine.reload(); win.reload(); account.reload();
     } catch (err) {
       setMsg(err instanceof ApiError ? `⚠ ${err.message}` : "실패");
@@ -64,6 +89,9 @@ export default function Listings() {
             <input className="input mt-1 font-sans text-base" value={channel} onChange={(e) => setChannel(e.target.value)}
               placeholder="@채널핸들" autoCapitalize="off" autoCorrect="off" />
           </label>
+          {previewing && <p className="text-sm text-muted">🔎 채널을 찾는 중…</p>}
+          {previewErr && <p role="alert" className="text-sm text-amber-300">⚠ {previewErr}</p>}
+          {preview && <ChannelPreview p={preview} />}
           <div className="flex items-center justify-between rounded-xl bg-panel2 px-3 py-2.5 text-sm">
             <span className="text-muted">상장 신청 비용</span>
             <span className="font-bold tabular-nums">₩{credits(fee)}</span>
@@ -77,8 +105,9 @@ export default function Listings() {
           <label className="block text-xs text-muted">요청 사유 (선택)
             <input className="input mt-1" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
           </label>
-          <button className="btn-primary w-full py-2.5" disabled={pending || !channel || !w?.open || w?.limit_reached || short}>
-            {w?.limit_reached ? "요청 최대한도 도달" : !w?.open ? "오후 7시부터 요청 가능" : short ? "비용 부족" : pending ? "처리 중…" : `₩${credits(fee)} 내고 상장 요청하기`}
+          <button className="btn-primary w-full py-2.5" disabled={pending || !preview || !!preview.listing_status || !w?.open || w?.limit_reached || short}>
+            {w?.limit_reached ? "요청 최대한도 도달" : !w?.open ? "오후 7시부터 요청 가능" : short ? "비용 부족" : pending ? "처리 중…" : !preview ? "채널을 먼저 확인해 주세요"
+              : preview.listing_status ? "요청할 수 없는 채널" : `'${preview.title}' ₩${credits(fee)}로 상장 요청`}
           </button>
           {msg && <p role="status" className="text-sm">{msg}</p>}
         </form>

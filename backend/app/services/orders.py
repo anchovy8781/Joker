@@ -150,8 +150,13 @@ def _protect_price(db: Session, asset: MarketAsset, side: str, order_type: str, 
             raise AppError(422, "PRICE_OUT_OF_BAND", f"Limit price must be between {lo} and {hi}",
                            {"min": lo, "max": hi})
         return limit_price  # type: ignore[return-value]
+    # Market orders: within ±dev of the last traded price, never outside the daily band.
     dev = s.market_order_max_deviation_bps
-    return bps_up(ref, dev) if side == "buy" else max(1, bps_down(ref, dev))
+    band = price_band(db, asset)
+    last = asset.current_price or ref
+    if side == "buy":
+        return min(bps_up(last, dev), bps_up(ref, band))
+    return max(1, s.min_price, bps_down(last, dev), bps_down(ref, band))
 
 
 def _collect_makers(db: Session, asset_id: int, side: str, protect: int, quantity: int, user_id: int):

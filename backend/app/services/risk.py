@@ -46,7 +46,7 @@ def add_event(db: Session, *, user_id: int | None, asset_id: int | None, event_t
 
 
 def _system_ids(db: Session) -> set[int]:
-    return set(db.execute(select(User.id).where(User.role == "system")).scalars())
+    return set(db.execute(select(User.id).where(User.role.in_(("system", "bot")))).scalars())
 
 
 def related(db: Session, a: int, b: int) -> list[str]:

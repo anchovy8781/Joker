@@ -88,6 +88,15 @@ def _rate_per_hour(samples: list[ChannelSample], attr: str, window: timedelta) -
 _cache: dict[int, tuple[float, dict]] = {}
 
 
+def _whales(db: Session, asset_id: int, now: datetime) -> dict:
+    """세력 동향: what the whale bots have been doing on this asset in the last 30 minutes."""
+    from app.services import bots
+
+    flow = bots.whale_net_flow(db, asset_id, now - timedelta(minutes=30))
+    state = "매집" if flow["net"] > 0 else "분산" if flow["net"] < 0 else "관망"
+    return {**flow, "state": state}
+
+
 def snapshot(db: Session, asset: MarketAsset, channel: Channel, now: datetime | None = None) -> dict:
     """Everything the live panel needs in one call (cached for 1s per asset to absorb polling)."""
     hit = _cache.get(asset.id)
@@ -146,6 +155,7 @@ def snapshot(db: Session, asset: MarketAsset, channel: Channel, now: datetime | 
                  "spread_bps": (round((best_ask - best_bid) / best_ask * 10_000) if best_bid and best_ask else None)},
         "ticks": [{"t": t, "price": p, "qty": q, "side": side} for t, p, q, side in reversed(ticks)],
         "youtube": yt,
+        "whales": _whales(db, asset.id, now),
         "intraday": {"adj_bps": asset.intraday_adj_bps, "detail": asset.intraday_detail,
                      "fair_price": max(get_settings().min_price,
                                        asset.reference_price * (10_000 + asset.intraday_adj_bps) // 10_000),

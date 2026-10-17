@@ -11,6 +11,12 @@ export function useMarketHours() {
 export function MarketHoursBadge() {
   const { data } = useMarketHours();
   if (!data) return null;
+  if (!data.enforced) {
+    return (
+      <span className="whitespace-nowrap rounded-full border border-emerald-500/50 px-2 py-0.5 text-xs text-emerald-300"
+        title="언제든 바로 매수·매도할 수 있어요">● 24시간 거래</span>
+    );
+  }
   return data.open ? (
     <span className="whitespace-nowrap rounded-full border border-emerald-500/50 px-1.5 py-0.5 text-xs text-emerald-300"
       title={`장 마감 ${kstTime(data.session_close)}`}>

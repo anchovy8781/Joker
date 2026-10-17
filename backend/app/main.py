@@ -1,5 +1,6 @@
 import logging
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,7 +35,15 @@ def create_app() -> FastAPI:
     s = get_settings()
     if s.is_production:
         _check_production_settings(s)
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        from app.services import simulator
+
+        simulator.start()  # virtual traders (no-op in tests or when disabled)
+        yield
+
     app = FastAPI(
+        lifespan=lifespan,
         title="YouTube Exchange API",
         version="0.1.0",
         description="Virtual-credit stock market game based on YouTube channels. Credits have no cash value.",

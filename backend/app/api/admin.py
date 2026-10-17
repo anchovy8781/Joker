@@ -28,6 +28,7 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    QuickListIn,
     AdjustmentIn,
     AnnouncementIn,
     ChannelRegisterIn,
@@ -122,6 +123,7 @@ def channels(admin: User = Depends(require_admin), db: Session = Depends(get_db)
     if listing_status:
         q = q.where(Channel.listing_status == listing_status)
     return [{"id": c.id, "youtube_channel_id": c.youtube_channel_id, "title": c.title,
+             "handle": c.handle, "thumbnail_url": c.thumbnail_url,
              "data_source": c.data_source, "listing_status": c.listing_status,
              "data_quality_status": c.data_quality_status, "freshness": freshness(c).model_dump(),
              "requested_by": req_name, "request_note": c.request_note,
@@ -129,6 +131,7 @@ def channels(admin: User = Depends(require_admin), db: Session = Depends(get_db)
                                                "trading_status": a.trading_status,
                                                "halt_reason": a.halt_reason,
                                                "reference_price": a.reference_price,
+                                               "current_price": a.current_price,
                                                "celebrity_until": a.celebrity_until,
                                                "new_video_until": a.new_video_until}}
             for c, a, req_name in db.execute(q.order_by(Channel.id)).all()]
@@ -149,6 +152,68 @@ def register_channel(body: ChannelRegisterIn, request: Request, admin: User = De
     return {"id": ch.id, "listing_status": ch.listing_status, "youtube_channel_id": cid, "title": title}
 
 
+def _approve_with_suggestion(s: Session, ch: Channel, admin: User, request: Request, reason: str,
+                             celebrity: bool = False, symbol=None, price=None, shares=None):
+    sug = channel_lookup.suggest_listing(s, ch)
+    a = listing.approve_listing(s, channel_id=ch.id, symbol=symbol or sug["symbol"],
+                                initial_price=price or sug["initial_price"],
+                                shares_outstanding=shares or sug["shares_outstanding"],
+                                actor_id=admin.id, request_id=_rid(request), celebrity_new_channel=celebrity)
+    write_audit(s, "listing.approve_reason", actor_id=admin.id, target_type="asset", target_id=a.id,
+                request_id=_rid(request), metadata={"reason": reason})
+    return a
+
+
+@router.post("/quick-list", status_code=201)
+def quick_list(body: QuickListIn, request: Request, admin: User = Depends(require_admin),
+               db: Session = Depends(get_db)):
+    """원터치 상장: handle/URL → look up → register (if new) → list with suggested terms."""
+    info = channel_lookup.preview(db, body.channel, get_api_provider())
+    if info["listing_status"] == "listed":
+        raise AppError(409, "ALREADY_LISTED", "이미 상장된 채널입니다", {"asset_id": info.get("asset_id")})
+    admin_id = admin.id
+
+    def tx(s: Session):
+        ch = s.execute(select(Channel).where(Channel.youtube_channel_id == info["youtube_channel_id"])).scalar_one_or_none()
+        if ch is None:
+            ch = listing.register_channel(s, youtube_channel_id=info["youtube_channel_id"], title=info["title"][:200],
+                                          data_source="youtube_api", category=None, actor_id=admin_id,
+                                          request_id=_rid(request))
+        elif ch.listing_status == "rejected":
+            ch.listing_status = "pending"
+        ch.handle = info["handle"] or ch.handle
+        ch.thumbnail_url = info["thumbnail_url"] or ch.thumbnail_url
+        if info["subscriber_count"] is not None:
+            listing.store_snapshot(s, ch, _snapshot_from(info), utcnow())
+        return _approve_with_suggestion(s, ch, s.get(User, admin_id), request, "원터치 상장",
+                                        body.celebrity_new_channel)
+    a = run_in_transaction(db, tx)
+    return {"asset_id": a.id, "symbol": a.symbol, "initial_price": a.reference_price, "title": info["title"],
+            "thumbnail_url": info["thumbnail_url"]}
+
+
+def _snapshot_from(info: dict):
+    from app.services.youtube import ChannelSnapshot
+
+    return ChannelSnapshot(youtube_channel_id=info["youtube_channel_id"], title=info["title"],
+                           thumbnail_url=info["thumbnail_url"], handle=info["handle"],
+                           subscriber_count=info["subscriber_count"], view_count=info["view_count"] or 0,
+                           video_count=info["video_count"] or 0, source_timestamp=None,
+                           hidden_subscriber_count=info["hidden_subscriber_count"])
+
+
+@router.post("/channels/approve-all")
+def approve_all(request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Approve every pending listing with suggested terms (one tap)."""
+    ids = db.execute(select(Channel.id).where(Channel.listing_status == "pending").order_by(Channel.id)).scalars().all()
+    listed = []
+    for cid in ids:
+        a = run_in_transaction(db, lambda s, cid=cid: _approve_with_suggestion(
+            s, s.get(Channel, cid), s.get(User, admin.id), request, "원터치 일괄 승인"))
+        listed.append({"asset_id": a.id, "symbol": a.symbol})
+    return {"approved": len(listed), "assets": listed}
+
+
 @router.get("/channels/{channel_id}/suggestion")
 def listing_suggestion(channel_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     ch = db.get(Channel, channel_id)
@@ -164,15 +229,8 @@ def approve(channel_id: int, body: ListingApproveIn, request: Request,
         ch = s.get(Channel, channel_id)
         if ch is None:
             raise AppError(404, "CHANNEL_NOT_FOUND", "Channel not found")
-        sug = channel_lookup.suggest_listing(s, ch)
-        a = listing.approve_listing(s, channel_id=channel_id, symbol=body.symbol or sug["symbol"],
-                                    initial_price=body.initial_price or sug["initial_price"],
-                                    shares_outstanding=body.shares_outstanding or sug["shares_outstanding"],
-                                    actor_id=admin.id, request_id=_rid(request),
-                                    celebrity_new_channel=body.celebrity_new_channel)
-        write_audit(s, "listing.approve_reason", actor_id=admin.id, target_type="asset", target_id=a.id,
-                    request_id=_rid(request), metadata={"reason": body.reason})
-        return a
+        return _approve_with_suggestion(s, ch, admin, request, body.reason, body.celebrity_new_channel,
+                                        body.symbol, body.initial_price, body.shares_outstanding)
     a = run_in_transaction(db, tx)
     return {"asset_id": a.id, "symbol": a.symbol, "trading_status": a.trading_status,
             "initial_price": a.reference_price, "shares_outstanding": a.shares_outstanding}

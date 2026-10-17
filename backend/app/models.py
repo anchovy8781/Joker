@@ -44,7 +44,7 @@ def _now() -> Mapped[datetime]:
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (
-        CheckConstraint("role IN ('user','admin','system')", name="ck_users_role"),
+        CheckConstraint("role IN ('user','admin','system','bot')", name="ck_users_role"),
         CheckConstraint("status IN ('active','restricted','suspended')", name="ck_users_status"),
         CheckConstraint("risk_level IN ('low','medium','high')", name="ck_users_risk_level"),
         CheckConstraint(
@@ -105,7 +105,7 @@ class LedgerEntry(Base):
         CheckConstraint(
             "entry_type IN ('signup_grant','trade_buy','trade_sell','trade_fee',"
             "'admin_adjustment','correction','mission_reward','donation_sent','donation_received',"
-            "'admin_grant','listing_fee','listing_fee_refund')",
+            "'admin_grant','listing_fee','listing_fee_refund','system_funding')",
             name="ck_ledger_entry_type",
         ),
         Index(

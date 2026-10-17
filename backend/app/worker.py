@@ -59,6 +59,9 @@ def _risk(db, payload):
 
 @jobs.handler("mm_requote")
 def _requote(db, payload):
+    from app.services.listing import resume_auto_halts
+
+    resume_auto_halts(db)
     ids = db.execute(
         select(MarketAsset.id).join(Channel, Channel.id == MarketAsset.channel_id)
         .where(Channel.listing_status == "listed", MarketAsset.trading_status == "active")

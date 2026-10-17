@@ -1,0 +1,260 @@
+"""Virtual traders: 세력(whales), momentum chasers, contrarians and noise traders.
+
+They are ordinary accounts with role 'bot' that trade through the same order engine,
+fees and ledger as players (so reconciliation still balances). Their starting capital
+is system-funded. Leaderboards and risk scans ignore them.
+
+Behaviour per round (every few seconds):
+  * noise     — small random buys/sells
+  * momentum  — buy after a 10-minute rise, sell after a fall
+  * contrarian— sell above the intraday fair value, buy below it
+  * whale     — per asset and 90-minute window a deterministic "campaign": accumulate
+                (heavy buying) for the first 55%, then distribute (heavy selling)
+Orders are mostly market orders (they move the price) plus some limit orders near the
+touch (they add depth). Bots never trade with themselves (self-trade prevention applies).
+"""
+
+import hashlib
+import logging
+import random
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.errors import AppError
+from app.models import Account, Channel, LedgerEntry, MarketAsset, MarketBar, Position, Trade, User
+from app.security import utcnow
+from app.services import intraday
+from app.services.fees import bps_down, bps_up
+from app.services.ledger import lock_account, post_entry
+from app.services.listing import fund_market_maker, get_market_maker, requote_market_maker
+from app.services.orders import OrderRequest, place_order
+
+log = logging.getLogger("yex.bots")
+
+
+@dataclass(frozen=True)
+class Persona:
+    username: str
+    kind: str  # whale | momentum | contrarian | noise
+    capital: int
+    activity: float  # chance to act on an asset in a round
+
+
+PERSONAS: list[Persona] = [
+    Persona("세력_큰손고래", "whale", 80_000_000, 0.65),
+    Persona("세력_작전주팀", "whale", 50_000_000, 0.6),
+    Persona("세력_기관창구", "whale", 120_000_000, 0.45),
+    Persona("추세_불나방", "momentum", 8_000_000, 0.4),
+    Persona("추세_돌파매매", "momentum", 8_000_000, 0.35),
+    Persona("추세_단타왕", "momentum", 5_000_000, 0.45),
+    Persona("역발상_가치투자", "contrarian", 10_000_000, 0.35),
+    Persona("역발상_줍줍이", "contrarian", 6_000_000, 0.4),
+    Persona("개미_퇴근길", "noise", 2_000_000, 0.35),
+    Persona("개미_점심시간", "noise", 2_000_000, 0.3),
+    Persona("개미_새벽감성", "noise", 1_500_000, 0.3),
+    Persona("개미_존버", "noise", 3_000_000, 0.25),
+]
+BY_NAME = {p.username: p for p in PERSONAS}
+_centres: dict[int, int] = {}  # price at the last market-maker requote, per asset
+WHALE_WINDOW = timedelta(minutes=90)
+
+
+def ensure_bots(db: Session) -> list[User]:
+    """Create missing bot accounts and fund each one once with its starting capital."""
+    users = []
+    for p in PERSONAS:
+        norm = p.username.lower()
+        u = db.execute(select(User).where(User.normalized_username == norm)).scalar_one_or_none()
+        if u is None:
+            u = User(username=p.username, normalized_username=norm, role="bot", password_hash=None,
+                     verification_status="verified")
+            db.add(u)
+            db.flush()
+            db.add(Account(user_id=u.id, cash_balance=0, reserved_cash=0))
+            db.flush()
+        funded = db.execute(select(LedgerEntry.id).where(
+            LedgerEntry.user_id == u.id, LedgerEntry.reference_type == "bot_seed")).first()
+        if not funded:
+            post_entry(db, lock_account(db, u.id), entry_type="system_funding", amount=p.capital,
+                       transaction_id=uuid.uuid4(), reference_type="bot_seed", reference_id=u.id,
+                       memo=f"Starting capital for virtual trader ({p.kind})")
+            db.flush()  # the session does not autoflush: make the seed visible to the next check
+        users.append(u)
+    return users
+
+
+def _refill(db: Session, u: User, p: Persona, now: datetime) -> None:
+    """A broke bot gets topped up at most once per day (keeps the market alive)."""
+    acct = db.get(Account, u.id)
+    if acct.cash_balance - acct.reserved_cash >= p.capital // 5:
+        return
+    tag = f"{u.id}:{now.date().isoformat()}"
+    if db.execute(select(LedgerEntry.id).where(LedgerEntry.reference_type == "bot_refill",
+                                               LedgerEntry.reference_id == tag)).first():
+        return
+    post_entry(db, lock_account(db, u.id), entry_type="system_funding", amount=p.capital // 2,
+               transaction_id=uuid.uuid4(), reference_type="bot_refill", reference_id=tag,
+               memo="Daily refill for virtual trader")
+
+
+def whale_phase(asset_id: int, now: datetime) -> tuple[str | None, float]:
+    """('accumulate' | 'distribute' | None, strength 0..1) — deterministic per 90-minute window."""
+    secs = WHALE_WINDOW.total_seconds()
+    idx = int(now.timestamp() // secs)
+    h = int(hashlib.sha256(f"whale:{asset_id}:{idx}".encode()).hexdigest()[:8], 16)
+    if h % 100 >= 40:  # ~40% of windows have a campaign on a given asset
+        return None, 0.0
+    strength = 0.4 + (h >> 8) % 60 / 100
+    frac = (now.timestamp() % secs) / secs
+    return ("accumulate" if frac < 0.55 else "distribute"), strength
+
+
+def _ret_10m(db: Session, asset_id: int, now: datetime) -> float:
+    closes = db.execute(select(MarketBar.close_price).where(
+        MarketBar.asset_id == asset_id, MarketBar.interval == "1m", MarketBar.timestamp >= now - timedelta(minutes=10))
+        .order_by(MarketBar.timestamp)).scalars().all()
+    return (closes[-1] - closes[0]) / closes[0] if len(closes) >= 2 and closes[0] else 0.0
+
+
+def _decide(p: Persona, rng: random.Random, asset: MarketAsset, ctx: dict) -> tuple[str, float] | None:
+    """(side, order value in credits) or None."""
+    price = asset.current_price
+    if p.kind == "noise":
+        return rng.choice(("buy", "sell")), rng.uniform(15_000, 150_000)
+    if p.kind == "momentum":
+        r = ctx["ret_10m"]
+        if abs(r) < 0.002:
+            return None
+        return ("buy" if r > 0 else "sell"), rng.uniform(80_000, 600_000) * min(3.0, abs(r) / 0.004)
+    if p.kind == "contrarian":
+        gap = (price - ctx["fair"]) / ctx["fair"]
+        if abs(gap) < 0.025:
+            return None
+        return ("sell" if gap > 0 else "buy"), rng.uniform(100_000, 700_000) * min(3.0, abs(gap) / 0.02)
+    phase, strength = ctx["whale"]
+    if phase is None:
+        return (rng.choice(("buy", "sell")), rng.uniform(100_000, 500_000)) if rng.random() < 0.3 else None
+    side = "buy" if phase == "accumulate" else "sell"
+    if rng.random() < 0.2:  # shake-outs: a little noise against the campaign
+        side = "sell" if side == "buy" else "buy"
+    return side, rng.uniform(500_000, 3_500_000) * strength
+
+
+def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, rng: random.Random) -> bool:
+    price = max(1, asset.current_price)
+    qty = max(1, int(value // price))
+    if side == "sell":
+        pos = db.get(Position, (bot.id, asset.id))
+        free = (pos.quantity - pos.reserved_quantity) if pos else 0
+        if free <= 0:
+            # Nothing to sell yet: build a position instead (smaller), so bots always take part.
+            side, qty = "buy", max(1, qty // 2)
+        else:
+            qty = min(qty, free)
+    if side == "buy":
+        acct = db.get(Account, bot.id)
+        qty = min(qty, max(0, (acct.cash_balance - acct.reserved_cash) // (price * 2)))
+        if qty <= 0:
+            return False
+    qty = min(qty, get_settings().max_order_quantity)
+    if rng.random() < 0.3:  # passive: a limit order just inside/at the touch adds depth
+        bps = rng.randint(0, 40)
+        limit = bps_down(price, bps) if side == "buy" else bps_up(price, bps)
+        req = OrderRequest(asset.id, side, "limit", qty, limit, f"bot:{uuid.uuid4().hex}")
+    else:
+        req = OrderRequest(asset.id, side, "market", qty, None, f"bot:{uuid.uuid4().hex}")
+    try:
+        with db.begin_nested():
+            r = place_order(db, bot, req)
+        return r.order.status != "rejected"
+    except AppError:
+        return False
+
+
+def _cancel_stale_bot_orders(db: Session, bot_ids: list[int], now: datetime) -> None:
+    """Passive bot quotes live ~2 minutes so the book doesn't fill with stale orders."""
+    from app.models import Order
+    from app.services.orders import cancel_order
+
+    stale = db.execute(select(Order).where(Order.user_id.in_(bot_ids), Order.status.in_(("open", "partially_filled")),
+                                           Order.created_at < now - timedelta(minutes=2)).limit(50)).scalars().all()
+    for o in stale:
+        try:
+            with db.begin_nested():
+                cancel_order(db, db.get(User, o.user_id), o.id)
+        except AppError:
+            pass
+
+
+def run_round(db: Session, now: datetime | None = None, rng: random.Random | None = None,
+              commit_each: bool = False) -> dict:
+    """One market round: bots act on a sample of assets, then quotes are refreshed where
+    the price moved. With commit_each the work is committed per asset so player orders
+    never wait long behind a round; otherwise the caller commits."""
+    s = get_settings()
+    now = now or utcnow()
+    rng = rng or random.Random()
+    bots = ensure_bots(db)
+    mm = get_market_maker(db)
+    fund_market_maker(db, mm)
+    if commit_each:
+        db.commit()
+    assets = db.execute(select(MarketAsset).join(Channel, Channel.id == MarketAsset.channel_id)
+                        .where(Channel.listing_status == "listed", MarketAsset.trading_status == "active")
+                        .order_by(MarketAsset.id)).scalars().all()
+    if not assets:
+        return {"assets": 0, "orders": 0}
+    _cancel_stale_bot_orders(db, [b.id for b in bots], now)
+    rng.shuffle(assets)
+    orders = 0
+    touched: set[int] = set()
+    for asset in assets[:8]:
+        ctx = {"ret_10m": _ret_10m(db, asset.id, now), "fair": max(1, intraday.fair_price(asset)),
+               "whale": whale_phase(asset.id, now)}
+        for bot in rng.sample(bots, len(bots)):
+            if orders >= s.bot_max_orders_per_round:
+                break
+            p = BY_NAME[bot.username]
+            if rng.random() > p.activity:
+                continue
+            decision = _decide(p, rng, asset, ctx)
+            if decision is None:
+                continue
+            _refill(db, bot, p, now)
+            if _order(db, bot, asset, decision[0], decision[1], rng):
+                orders += 1
+                touched.add(asset.id)
+                db.refresh(asset)
+        if commit_each:
+            db.commit()
+    # Re-centre the market maker only where the price drifted a full ladder step away from
+    # the last centre (or every few minutes) — requotes are the expensive part of a round.
+    step = s.mm_step_bps
+    for asset in assets:
+        stale = asset.intraday_updated_at is None or now - asset.intraday_updated_at > timedelta(minutes=3)
+        last_centre = _centres.get(asset.id)
+        drifted = last_centre is None or abs(asset.current_price - last_centre) * 10_000 > step * last_centre
+        if stale or (asset.id in touched and drifted):
+            _centres[asset.id] = asset.current_price
+            requote_market_maker(db, asset.id)
+            if commit_each:
+                db.commit()
+    return {"assets": len(assets), "orders": orders, "touched": len(touched)}
+
+
+def whale_net_flow(db: Session, asset_id: int, since: datetime) -> dict:
+    """세력 동향: net shares bought by whale bots since `since` (for the live panel)."""
+    whales = [p.username.lower() for p in PERSONAS if p.kind == "whale"]
+    ids = db.execute(select(User.id).where(User.normalized_username.in_(whales))).scalars().all()
+    if not ids:
+        return {"net": 0, "bought": 0, "sold": 0}
+    bought = db.execute(select(func.coalesce(func.sum(Trade.quantity), 0)).where(
+        Trade.asset_id == asset_id, Trade.executed_at >= since, Trade.buyer_id.in_(ids))).scalar_one()
+    sold = db.execute(select(func.coalesce(func.sum(Trade.quantity), 0)).where(
+        Trade.asset_id == asset_id, Trade.executed_at >= since, Trade.seller_id.in_(ids))).scalar_one()
+    return {"net": int(bought) - int(sold), "bought": int(bought), "sold": int(sold)}

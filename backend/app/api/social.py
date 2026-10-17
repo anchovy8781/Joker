@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db, run_in_transaction
 from app.models import AutoOrder, Notification, User
 from app.schemas import (
@@ -154,6 +155,19 @@ def request_listing(body: ListingRequestIn, request: Request, user: User = Depen
 @router.get("/listing-requests")
 def my_listing_requests(user: User = Depends(require_user), db: Session = Depends(get_db)):
     return listing_requests.mine(db, user)
+
+
+@router.get("/listing-requests/preview")
+def listing_preview(channel: str = Query(min_length=2, max_length=200), user: User = Depends(require_user),
+                    db: Session = Depends(get_db)):
+    """Profile preview before paying the listing fee (looks the channel up on YouTube)."""
+    from app.security import hit_rate_limit
+    from app.services import channel_lookup
+
+    hit_rate_limit(f"listing_preview:user:{user.id}", 30, 60)
+    out = channel_lookup.preview(db, channel, get_api_provider())
+    db.commit()  # rate-limit bookkeeping
+    return {**out, "listing_fee": get_settings().listing_fee}
 
 
 @router.get("/listing-requests/status")

@@ -20,6 +20,7 @@ export type Live = {
     views_per_hour?: number | null; subs_per_hour?: number | null;
     est_views_now?: number; est_subs_now?: number | null;
   };
+  whales?: { net: number; bought: number; sold: number; state: "매집" | "분산" | "관망" };
   intraday?: { adj_bps: number; fair_price: number; reference_price: number; updated_at: string | null;
                detail: { yt_bps: number; subs_bps: number; flow_bps: number; views_per_hour: number | null;
                          views_per_hour_7d: number | null } | null };
@@ -29,7 +30,7 @@ const bp = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${(Math.abs(v) / 1
 
 function FairValue({ i }: { i: NonNullable<Live["intraday"]> }) {
   const d = i.detail;
-  const parts: [string, number][] = d ? [["유튜브 조회 속도", d.yt_bps], ["구독자 증가세", d.subs_bps], ["게임 매수세", d.flow_bps]] : [];
+  const parts: [string, number][] = d ? [["조회 속도", d.yt_bps], ["구독 증가", d.subs_bps], ["매수세", d.flow_bps]] : [];
   return (
     <div className="rounded-xl bg-panel2 px-3 py-2.5">
       <div className="flex items-baseline justify-between gap-2">
@@ -167,6 +168,21 @@ export function LivePanel({ assetId }: { assetId: number }) {
         <Tile label="인기도" value={L.asset.popularity_score ? `${L.asset.popularity_score} / 50` : "—"} sub={`마지막 체결 ${timeAgo(L.asset.last_trade_at)}`} />
       </div>
 
+      {L.whales && (
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-panel2 px-3 py-2.5"
+          title="가상의 세력(큰손 봇)들이 최근 30분 동안 사고판 수량">
+          <div>
+            <div className="text-xs text-muted">🐋 세력 동향 (30분)</div>
+            <div className={`text-lg font-bold ${L.whales.state === "매집" ? "text-up" : L.whales.state === "분산" ? "text-down" : "text-muted"}`}>
+              {L.whales.state === "매집" ? "▲ 매집 중" : L.whales.state === "분산" ? "▼ 분산 중" : "관망"}
+            </div>
+          </div>
+          <div className="text-right text-xs text-muted">
+            <div>매수 <b className="text-up">{credits(L.whales.bought)}</b>주</div>
+            <div>매도 <b className="text-down">{credits(L.whales.sold)}</b>주</div>
+          </div>
+        </div>
+      )}
       {L.intraday && <FairValue i={L.intraday} />}
 
       <h3 className="pt-1 text-sm font-bold text-muted">유튜브 채널 {yt?.source === "demo" && <span className="ml-1 rounded bg-accent/15 px-1 text-[11px] text-accent">DEMO 데이터</span>}</h3>

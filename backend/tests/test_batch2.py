@@ -120,7 +120,7 @@ def test_limit_reservation_out_of_band_at_open_is_canceled(make_user, bare_asset
     u = make_user()
     o = u.order(bare_asset, "buy", 1, price=9_400).json()["order"]
     a = db.get(MarketAsset, bare_asset)
-    a.reference_price = 11_000  # 9,400 is now outside the ±7% low-liquidity band
+    a.reference_price = 14_000  # 9,400 is now outside the low-liquidity band (±20%)
     db.commit()
     closed["open"] = True
     orders.activate_scheduled(db, o["id"])

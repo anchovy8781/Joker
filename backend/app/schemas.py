@@ -289,7 +289,7 @@ class DonationIn(Strict):
 
 
 class ReasonIn(Strict):
-    reason: str = Field(min_length=3, max_length=500)
+    reason: str = Field(default="관리자 원터치 처리", min_length=3, max_length=500)
 
 
 class ChannelRegisterIn(Strict):
@@ -305,7 +305,12 @@ class ListingApproveIn(Strict):
     symbol: str | None = Field(default=None, min_length=2, max_length=12)
     initial_price: int | None = Field(default=None, ge=100, le=10_000_000)
     shares_outstanding: int | None = Field(default=None, ge=1_000, le=1_000_000_000)
-    reason: str = Field(min_length=3, max_length=500)
+    reason: str = Field(default="관리자 원터치 승인", min_length=3, max_length=500)
+    celebrity_new_channel: bool = False
+
+
+class QuickListIn(Strict):
+    channel: str = Field(min_length=2, max_length=200)
     celebrity_new_channel: bool = False
 
 

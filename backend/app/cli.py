@@ -76,6 +76,12 @@ def bootstrap(env=None) -> None:
         print(f"bootstrap: admin '{name}' created")
     elif not has_admin:
         print("bootstrap: no admin yet (set YEX_BOOTSTRAP_ADMIN_USERNAME / _PASSWORD)")
+    # Trading is always open: lift data halts left from older versions; create the bots.
+    from app.services.bots import ensure_bots
+    from app.services.listing import resume_auto_halts
+
+    resume_auto_halts(db)
+    ensure_bots(db)
     # Every administrator (including ones created before this grant existed) gets it once.
     for admin_id in db.execute(select(User.id).where(User.role == "admin")).scalars().all():
         if grant_admin_bonus(db, admin_id):

@@ -1,6 +1,7 @@
 """Turn whatever a person typed (channel ID, channel URL, @handle or a bare handle) into a
 YouTube channel ID, and suggest listing terms for an administrator."""
 
+import html
 import re
 from urllib.parse import quote, unquote
 
@@ -40,23 +41,42 @@ def parse_channel_ref(text: str) -> tuple[str, str]:
     raise AppError(422, "INVALID_CHANNEL", "채널 @핸들, 채널 주소 또는 채널 ID(UC…)를 입력하세요")
 
 
-def lookup_public_page(handle: str) -> tuple[str, str | None] | None:
-    """Fallback without an API key: read the channel ID from the public channel page."""
+_PAGE_IMAGE = re.compile(r'<meta property="og:image" content="([^"]{1,500})"')
+_PAGE_SUBS = [re.compile(r'"subscriberCountText":\{[^{}]*?"simpleText":"([^"]{1,40})"'),
+              re.compile(r'"content":"(구독자 [^"]{1,30})"'),
+              re.compile(r'"content":"([0-9.,]+[KMB만천억]?\s*subscribers?)"')]
+# YouTube shows a cookie-consent interstitial to some regions without these.
+_CONSENT = {"CONSENT": "YES+cb", "SOCS": "CAI"}
+
+
+def fetch_public_page(path: str) -> dict | None:
+    """Public channel page (no API key): channel ID, title, avatar, subscriber text."""
     try:
-        r = httpx.get(f"https://www.youtube.com/{quote(handle)}", timeout=10, follow_redirects=True,
-                      headers={"Accept-Language": "ko,en;q=0.8", "User-Agent": "Mozilla/5.0"})
+        r = httpx.get(f"https://www.youtube.com/{quote(path, safe='@/')}", timeout=10, follow_redirects=True,
+                      cookies=_CONSENT,
+                      headers={"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+                               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"})
     except httpx.HTTPError:
         raise AppError(503, "YOUTUBE_UNAVAILABLE", "YouTube에 연결할 수 없습니다. 잠시 후 다시 시도하세요")
     if r.status_code == 404:
         return None
     if r.status_code != 200:
         raise AppError(503, "YOUTUBE_UNAVAILABLE", "YouTube에 연결할 수 없습니다. 잠시 후 다시 시도하세요")
-    for rx in _PAGE_ID:
-        m = rx.search(r.text)
-        if m:
-            t = _PAGE_TITLE.search(r.text)
-            return m.group(1), (t.group(1) if t else None)
-    return None
+    cid = next((m.group(1) for rx in _PAGE_ID if (m := rx.search(r.text))), None)
+    if cid is None:
+        return None
+    t = _PAGE_TITLE.search(r.text)
+    img = _PAGE_IMAGE.search(r.text)
+    subs = next((m.group(1) for rx in _PAGE_SUBS if (m := rx.search(r.text))), None)
+    return {"id": cid, "title": html.unescape(t.group(1)) if t else None,
+            "thumbnail_url": html.unescape(img.group(1)) if img else None, "subscriber_text": subs}
+
+
+def lookup_public_page(handle: str) -> tuple[str, str | None] | None:
+    """Fallback without an API key: read the channel ID from the public channel page."""
+    page = fetch_public_page(handle)
+    return (page["id"], page["title"]) if page else None
 
 
 def resolve(text: str, api: YouTubeDataAPIProvider | None) -> tuple[str, str | None]:
@@ -67,15 +87,44 @@ def resolve(text: str, api: YouTubeDataAPIProvider | None) -> tuple[str, str | N
     if api is not None:
         try:
             cid = api.resolve_handle(value)
-            if cid is None:
-                raise AppError(404, "CHANNEL_NOT_FOUND", "해당 핸들의 채널을 찾을 수 없습니다")
-            return cid, None
+            if cid is not None:
+                return cid, None
         except ProviderError:
-            pass  # quota exhausted / API down: try the public page instead
+            pass  # key restricted / quota exhausted / API down: use the public page instead
     found = lookup_public_page(value)
     if found is None:
-        raise AppError(404, "CHANNEL_NOT_FOUND", "해당 핸들의 채널을 찾을 수 없습니다")
+        raise AppError(404, "CHANNEL_NOT_FOUND", "해당 핸들의 채널을 찾을 수 없습니다. 철자를 확인해 주세요")
     return found
+
+
+def preview(db: Session, text: str, api: YouTubeDataAPIProvider | None) -> dict:
+    """What the user is about to request: profile, counts and whether it is already listed."""
+    cid, title = resolve(text, api)
+    kind, ref = parse_channel_ref(text)
+    out = {"youtube_channel_id": cid, "title": title or cid, "handle": ref if kind == "handle" else None,
+           "thumbnail_url": None, "subscriber_count": None, "view_count": None, "video_count": None,
+           "subscriber_text": None, "hidden_subscriber_count": False, "source": None}
+    snap = None
+    if api is not None:
+        try:
+            snap = api.fetch_channels([cid]).snapshots.get(cid)
+        except ProviderError:
+            snap = None
+    if snap is not None:
+        out.update(title=snap.title, handle=snap.handle or out["handle"], thumbnail_url=snap.thumbnail_url,
+                   subscriber_count=snap.subscriber_count, view_count=snap.view_count, video_count=snap.video_count,
+                   hidden_subscriber_count=snap.hidden_subscriber_count, source="youtube_api")
+    else:
+        page = fetch_public_page(out["handle"] or f"channel/{cid}")
+        if page:
+            out.update(title=page["title"] or out["title"], thumbnail_url=page["thumbnail_url"],
+                       subscriber_text=page["subscriber_text"], source="public_page")
+    existing = db.execute(select(Channel).where(Channel.youtube_channel_id == cid)).scalar_one_or_none()
+    out["listing_status"] = existing.listing_status if existing else None
+    if existing is not None:
+        asset = db.execute(select(MarketAsset.id).where(MarketAsset.channel_id == existing.id)).scalar()
+        out["asset_id"] = asset
+    return out
 
 
 def _nice_price(raw: float) -> int:

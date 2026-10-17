@@ -49,14 +49,20 @@ class Settings(BaseSettings):
     max_order_quantity: int = 100_000
 
     # Order engine
-    market_order_max_deviation_bps: int = 500  # market orders may walk at most 5% from reference
-    limit_band_bps: int = 1500  # limit prices must be within ±15% of reference
-    low_liquidity_band_bps: int = 700  # stricter band for illiquid assets
+    # Market orders may walk at most 5% from the last traded price (inside the daily band).
+    market_order_max_deviation_bps: int = 500
+    limit_band_bps: int = 3000  # daily price limit: ±30% of the reference price (KRX-style)
+    low_liquidity_band_bps: int = 2000  # tighter band for assets that barely traded
     low_liquidity_daily_trades: int = 5
 
     # Market maker (IPO inventory provider). It only trades with its own inventory and cash.
-    mm_spread_bps: list[int] = Field(default_factory=lambda: [50, 150, 300])
-    mm_level_fraction_bps: int = 50
+    # Ladder of small quotes so that real volume moves the price.
+    mm_levels: int = 6
+    mm_half_spread_bps: int = 20
+    mm_step_bps: int = 30
+    mm_level_value: int = 300_000  # credits per level near the touch (deeper levels a bit larger)
+    mm_follow_bps: int = 7000  # quote centre = 70% last trade + 30% intraday fair value
+    mm_cash_per_asset: int = 30_000_000  # system-funded bid liquidity so selling always works
     intraday_max_adj_bps: int = 400  # quote centre may move at most ±4% off the daily reference
     price_alerts_max_active: int = 20  # each level offers 0.5% of remaining inventory
 
@@ -65,7 +71,13 @@ class Settings(BaseSettings):
     live_samples_keep_days: int = 7
 
     # Trading sessions (Korea time). Disable only for tests/local experiments.
-    market_hours_enabled: bool = True
+    auto_halt_enabled: bool = False  # data problems show a badge instead of halting trading
+    market_hours_enabled: bool = False  # 24h trading; True restores sessions + reservations
+
+    # Virtual traders (세력·개미) that keep the market moving.
+    bots_enabled: bool = True
+    bot_interval_seconds: float = 6.0  # stretched automatically when rounds are slow
+    bot_max_orders_per_round: int = 12
 
     # Listing requests: open daily from this hour (KST) until midnight, global daily cap.
     listing_request_open_hour_kst: int = 19

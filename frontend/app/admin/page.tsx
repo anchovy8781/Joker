@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
-import { Card, Empty, ErrorBox, FreshnessBadge } from "@/components/ui";
+import { ChannelAvatar } from "@/components/ChannelAvatar";
+import { ChannelPreview, type ChannelPreviewData } from "@/components/ChannelPreview";
+import { Card, Empty, ErrorBox } from "@/components/ui";
 import { api, ApiError, type Freshness } from "@/lib/api";
 import { credits, dateTime } from "@/lib/format";
 import { useApi } from "@/lib/hooks";
 
-type AdminChannel = { id: number; youtube_channel_id: string; title: string; data_source: string; listing_status: string; data_quality_status: string; freshness: Freshness; requested_by: string | null; request_note: string | null; asset: { id: number; symbol: string; trading_status: string; halt_reason: string | null; reference_price: number; celebrity_until: string | null; new_video_until: string | null } | null };
+type AdminChannel = { id: number; youtube_channel_id: string; title: string; handle: string | null; thumbnail_url: string | null; data_source: string; listing_status: string; data_quality_status: string; freshness: Freshness; requested_by: string | null; request_note: string | null; asset: { id: number; symbol: string; trading_status: string; halt_reason: string | null; reference_price: number; current_price?: number; celebrity_until: string | null; new_video_until: string | null } | null };
 type ChatRow = { id: number; room: string; user_id: number; username: string; body: string; created_at: string; hidden_at: string | null; hidden_reason: string | null };
 type RiskEv = { id: number; user_id: number | null; username: string | null; asset_id: number | null; event_type: string; severity: string; reason: string; evidence: unknown; created_at: string; reviewed_at: string | null; resolution: string | null };
 type Audit = { id: number; actor_id: number | null; action: string; target_type: string | null; target_id: string | null; request_id: string | null; metadata: unknown; created_at: string };
@@ -57,67 +59,100 @@ function useAction() {
 }
 
 function askReason(label: string): string | null {
-  const r = window.prompt(`${label} 사유를 입력하세요 (필수, 감사 로그에 기록)`);
+  // Pre-filled so a single OK tap is enough; the reason still goes to the audit log.
+  const r = window.prompt(`${label} 사유 (감사 로그에 기록)`, `관리자 ${label}`);
   return r && r.trim().length >= 3 ? r.trim() : null;
 }
 
 function Listing() {
-  const { data, reload } = useApi<AdminChannel[]>("/api/admin/channels");
+  const { data, reload } = useApi<AdminChannel[]>("/api/admin/channels", 15_000);
   const { msg, run } = useAction();
-  const [form, setForm] = useState({ youtube_channel_id: "", title: "", data_source: "youtube_api" });
-  const [approve, setApprove] = useState<Record<number, { symbol: string; price: string; shares: string; celebrity: boolean }>>({});
-  const rows = data ? [...data].sort((a, b) => Number(b.listing_status === "pending") - Number(a.listing_status === "pending")) : null;
+  const [ref, setRef] = useState("");
+  const [preview, setPreview] = useState<ChannelPreviewData | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState<"pending" | "listed" | "all">("pending");
+
+  useEffect(() => {
+    setPreview(null);
+    const v = ref.trim();
+    if (v.length < 2) return;
+    let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const p = await api<ChannelPreviewData>(`/api/listing-requests/preview?channel=${encodeURIComponent(v)}`);
+        if (alive) setPreview(p);
+      } catch { /* shown when the admin taps the button */ }
+    }, 600);
+    return () => { alive = false; clearTimeout(t); };
+  }, [ref]);
+
+  const rows = data ?? [];
+  const pending = rows.filter((c) => c.listing_status === "pending");
+  const listed = rows.filter((c) => c.listing_status === "listed");
+  const shown = filter === "pending" ? pending : filter === "listed" ? listed : rows;
+  const tap = async (path: string, body?: unknown) => { setBusy(true); await run(path, body, reload); setBusy(false); };
+
   return (
     <div className="space-y-4">
-      <Card title="채널 등록 (상장 심사 대기열에 추가)">
-        <div className="grid gap-2 md:grid-cols-4">
-          <input className="input" placeholder="@핸들, 채널 주소 또는 ID" value={form.youtube_channel_id} onChange={(e) => setForm({ ...form, youtube_channel_id: e.target.value })} />
-          <input className="input" placeholder="표시 이름 (실제 채널은 자동)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-          <select className="input" value={form.data_source} onChange={(e) => setForm({ ...form, data_source: e.target.value })}>
-            <option value="youtube_api">실제 (YouTube API)</option>
-            <option value="demo">데모 데이터</option>
-          </select>
-          <button className="btn-primary" onClick={() => run("/api/admin/channels", { ...form, title: form.title.trim() || null }, reload)}>등록</button>
+      <Card title="⚡ 원터치 상장">
+        <p className="mb-2 text-sm text-muted">핸들만 넣으면 채널을 찾아 추천 가격으로 바로 상장해요.</p>
+        <div className="flex gap-2">
+          <input className="input flex-1 font-sans text-base" placeholder="@채널핸들 또는 주소" value={ref}
+            onChange={(e) => setRef(e.target.value)} autoCapitalize="off" />
+          <button className="btn-primary px-5" disabled={busy || ref.trim().length < 2}
+            onClick={async () => { await tap("/api/admin/quick-list", { channel: ref.trim() }); setRef(""); }}>
+            {busy ? "…" : "상장"}
+          </button>
         </div>
-        <p className="mt-2 text-xs text-muted">핸들만 넣으면 채널 ID와 이름을 자동으로 찾아요. 승인할 때 심볼·가격·주식 수를 비워두면 구독자 수 기준 추천값으로 상장돼요. 실제 채널은 첫 API 수집으로 데이터가 검증되기 전까지 거래 정지 상태로 상장됩니다.</p>
+        {preview && <div className="mt-3"><ChannelPreview p={preview} /></div>}
       </Card>
-      {msg && <p className="text-sm">{msg}</p>}
-      <Card title="채널 / 종목">
-        {!rows ? <Empty>…</Empty> : (
-          <div className="-mx-4 overflow-x-auto px-4"><table className="table">
-            <thead><tr><th>채널</th><th>출처</th><th>상장</th><th>데이터</th><th>종목</th><th>조치</th></tr></thead>
-            <tbody>{rows.map((c) => {
-              const ap = approve[c.id] ?? { symbol: "", price: "", shares: "", celebrity: false };
-              return (
-                <tr key={c.id}>
-                  <td><div className="max-w-[220px] truncate">{c.title}</div><div className="font-mono text-[11px] text-muted">{c.youtube_channel_id}</div>
-                    {c.requested_by && <div className="text-[11px] text-sky-300">요청: {c.requested_by}{c.request_note && ` · ${c.request_note}`}</div>}
-                    {c.asset?.celebrity_until && <div className="text-[11px] text-orange-300">🔥 유명인 신규 채널 할증</div>}</td>
-                  <td>{c.data_source === "demo" ? "DEMO" : "YouTube API"}</td>
-                  <td>{c.listing_status}</td>
-                  <td><FreshnessBadge f={c.freshness} /> <span className="text-xs text-muted">{c.data_quality_status}</span></td>
-                  <td>{c.asset ? <span className="font-mono">{c.asset.symbol} · {credits(c.asset.reference_price)} · {c.asset.trading_status}</span> : "—"}
-                    {c.asset?.halt_reason && <div className="max-w-[220px] truncate text-[11px] text-red-300">{c.asset.halt_reason}</div>}</td>
-                  <td className="space-x-1">
-                    {c.listing_status === "pending" && (
-                      <span className="inline-flex flex-wrap gap-1">
-                        <input className="input w-20 py-1" placeholder="심볼 자동" value={ap.symbol} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, symbol: e.target.value.toUpperCase() } })} />
-                        <input className="input w-24 py-1" placeholder="가격 자동" value={ap.price} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, price: e.target.value } })} title="최초 가격" />
-                        <input className="input w-28 py-1" placeholder="주식 수 자동" value={ap.shares} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, shares: e.target.value } })} title="발행 주식 수" />
-                        <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={ap.celebrity} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, celebrity: e.target.checked } })} />유명인 신규</label>
-                        <button className="btn-primary py-1" onClick={() => { const r = askReason("상장 승인"); if (r) run(`/api/admin/channels/${c.id}/approve`, { symbol: ap.symbol || null, initial_price: ap.price ? Number(ap.price) : null, shares_outstanding: ap.shares ? Number(ap.shares) : null, reason: r, celebrity_new_channel: ap.celebrity }, reload); }}>승인</button>
-                        <button className="btn-danger py-1" onClick={() => { const r = askReason("상장 거절"); if (r) run(`/api/admin/channels/${c.id}/reject`, { reason: r }, reload); }}>거절</button>
-                      </span>
-                    )}
-                    {c.asset && c.asset.trading_status === "active" && <button className="btn-danger py-1" onClick={() => { const r = askReason("거래 정지"); if (r) run(`/api/admin/assets/${c.asset!.id}/halt`, { reason: r }, reload); }}>거래 정지</button>}
-                    {c.asset && c.asset.trading_status === "halted" && <button className="btn-ghost py-1" onClick={() => { const r = askReason("거래 재개"); if (r) run(`/api/admin/assets/${c.asset!.id}/resume`, { reason: r }, reload); }}>재개</button>}
-                  </td>
-                </tr>
-              );
-            })}</tbody>
-          </table></div>
+      {msg && <p role="status" className="text-sm">{msg}</p>}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {([["pending", `심사 대기 ${pending.length}`], ["listed", `상장 ${listed.length}`], ["all", "전체"]] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setFilter(k)} className={`chip px-3 py-1.5 text-sm ${filter === k ? "chip-on" : ""}`}>{l}</button>
+        ))}
+        {pending.length > 0 && (
+          <button className="btn-primary ml-auto px-4 py-2" disabled={busy}
+            onClick={() => tap("/api/admin/channels/approve-all")}>✓ 대기 {pending.length}개 모두 승인</button>
         )}
-      </Card>
+      </div>
+
+      {!data ? <Empty>불러오는 중…</Empty> : shown.length === 0 ? <Card><Empty>{filter === "pending" ? "심사 대기 중인 요청이 없어요" : "채널이 없어요"}</Empty></Card> : (
+        <ul className="space-y-2">
+          {shown.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center gap-3 rounded-2xl bg-panel p-3">
+              <ChannelAvatar src={c.thumbnail_url} title={c.title} seed={c.youtube_channel_id} size={48} className="rounded-full" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-bold">{c.title}</div>
+                <div className="truncate text-sm text-muted">
+                  {c.asset ? <span className="font-mono">{c.asset.symbol} · ₩{credits(c.asset.current_price ?? c.asset.reference_price)}</span> : (c.handle ?? c.youtube_channel_id)}
+                  {c.requested_by && <> · 요청 {c.requested_by}</>}
+                </div>
+                {c.request_note && <div className="truncate text-xs text-muted">“{c.request_note}”</div>}
+              </div>
+              {c.listing_status === "pending" && (
+                <div className="flex gap-2">
+                  <button className="btn-primary px-4 py-2" disabled={busy} onClick={() => tap(`/api/admin/channels/${c.id}/approve`)}>승인</button>
+                  <button className="btn-danger px-4 py-2" disabled={busy} onClick={() => tap(`/api/admin/channels/${c.id}/reject`)}>거절</button>
+                </div>
+              )}
+              {c.asset && (
+                <button role="switch" aria-checked={c.asset.trading_status === "active"} disabled={busy}
+                  onClick={() => tap(`/api/admin/assets/${c.asset!.id}/${c.asset!.trading_status === "active" ? "halt" : "resume"}`)}
+                  className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold ${c.asset.trading_status === "active" ? "bg-emerald-500/15 text-emerald-300" : "bg-red-500/15 text-red-300"}`}>
+                  <span className={`relative inline-block h-5 w-9 rounded-full ${c.asset.trading_status === "active" ? "bg-emerald-500" : "bg-zinc-600"}`}>
+                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${c.asset.trading_status === "active" ? "left-[18px]" : "left-0.5"}`} />
+                  </span>
+                  {c.asset.trading_status === "active" ? "거래 중" : "정지"}
+                </button>
+              )}
+              {c.listing_status === "rejected" && <span className="text-sm text-muted">거절됨</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-muted">승인은 구독자 수 기준 추천가(심볼·가격·주식 수 자동)로 바로 상장돼요. 거절하면 신청 비용이 환불돼요. 모든 조치는 감사 로그에 남아요.</p>
     </div>
   );
 }

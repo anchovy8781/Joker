@@ -5,6 +5,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import httpx
+import pytest
 from sqlalchemy import func, select
 
 from app.models import Channel, MarketAsset, MarketEvent, PriceUpdate
@@ -13,6 +14,14 @@ from app.services import collector, pricing
 from app.services.listing import approve_listing, register_channel
 from app.services.youtube import YouTubeDataAPIProvider
 from tests.conftest import admin_id, give_shares, list_demo_asset
+
+
+@pytest.fixture(autouse=True)
+def _auto_halts_on(monkeypatch):
+    """These tests cover the optional data-safety halts (off by default: trading always open)."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "auto_halt_enabled", True)
 
 
 def _asset(db, aid):

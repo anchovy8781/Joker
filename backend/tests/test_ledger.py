@@ -29,9 +29,11 @@ def test_10_ledger_sum_equals_balance(make_user, asset, db):
     run = reconcile(db)
     assert run.status == "ok", run.mismatches_json
     totals = run.totals_json
-    # Credits only enter via grants and only leave via fees; trades are zero-sum.
+    # Credits only enter via grants / system liquidity funding and only leave via fees;
+    # trades are zero-sum.
     assert totals["by_entry_type"]["trade_buy"] + totals["by_entry_type"]["trade_sell"] == 0
-    assert totals["total_cash"] == totals["by_entry_type"]["signup_grant"] + totals["by_entry_type"]["trade_fee"]
+    assert totals["total_cash"] == (totals["by_entry_type"]["signup_grant"] + totals["by_entry_type"]["trade_fee"]
+                                    + totals["by_entry_type"].get("system_funding", 0))
     assert totals["fees_burned"] > 0
 
 

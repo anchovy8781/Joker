@@ -22,6 +22,7 @@ from app.security import utcnow
 from app.services import bars, market_hours
 from app.services.audit import write_audit
 from app.services.fees import bps_down, bps_up, buy_reservation
+from app.services.ledger import lock_account, post_entry
 from app.services.notify import notify, notify_holders
 from app.services.orders import OrderRequest, cancel_all_for_asset, lock_asset, place_order
 from app.services.youtube import ChannelSnapshot, DemoProvider
@@ -161,7 +162,7 @@ def approve_listing(
     channel.listing_status = "listed"
     channel.listed_at = now
     db.flush()
-    if channel.data_source == "youtube_api" and channel.last_data_update_at is None:
+    if s.auto_halt_enabled and channel.data_source == "youtube_api" and channel.last_data_update_at is None:
         # Never trade on data we have not verified yet.
         asset.trading_status = "halted"
         asset.halt_reason = f"{AUTO_PREFIX}AWAITING_DATA — waiting for first YouTube API collection"
@@ -228,7 +229,8 @@ def resume(db: Session, asset_id: int, reason: str, actor_id: int | None, reques
     channel = db.get(Channel, asset.channel_id)
     from app.services.pricing import is_stale
 
-    if channel.data_quality_status == "unavailable" or is_stale(channel, utcnow()):
+    if get_settings().auto_halt_enabled and (channel.data_quality_status == "unavailable"
+                                             or is_stale(channel, utcnow())):
         raise AppError(409, "DATA_NOT_FRESH", "Cannot resume: channel data is stale or unavailable")
     asset.trading_status = "active"
     asset.halt_reason = None
@@ -240,7 +242,10 @@ def resume(db: Session, asset_id: int, reason: str, actor_id: int | None, reques
 
 
 def auto_halt(db: Session, asset: MarketAsset, code: str, detail: str) -> None:
-    """System halt for data problems. Never overrides a manual (operator) halt reason."""
+    """System halt for data problems. Never overrides a manual (operator) halt reason.
+    Off by default (auto_halt_enabled): trading stays open and the data badge shows staleness."""
+    if not get_settings().auto_halt_enabled:
+        return
     if asset.trading_status == "halted" and not (asset.halt_reason or "").startswith(AUTO_PREFIX):
         return
     if asset.trading_status == "halted" and (asset.halt_reason or "").startswith(f"{AUTO_PREFIX}{code}"):
@@ -266,9 +271,40 @@ def auto_resume_if_safe(db: Session, asset: MarketAsset) -> bool:
     return True
 
 
+def resume_auto_halts(db: Session) -> int:
+    """With automatic halts switched off, lift any data halt left from before."""
+    if get_settings().auto_halt_enabled:
+        return 0
+    n = 0
+    for asset in db.execute(select(MarketAsset).where(MarketAsset.trading_status == "halted",
+                                                       MarketAsset.halt_reason.like(f"{AUTO_PREFIX}%"))).scalars():
+        n += auto_resume_if_safe(db, asset)
+    return n
+
+
+def fund_market_maker(db: Session, mm: User | None = None) -> int:
+    """Keep the market maker's bid budget topped up from system funds so that selling is
+    always possible. Returns the amount added (0 when already funded)."""
+    s = get_settings()
+    mm = mm or get_market_maker(db)
+    n_assets = max(1, db.query(MarketAsset).count())
+    target = s.mm_cash_per_asset * n_assets
+    account = lock_account(db, mm.id)
+    if account.cash_balance >= target // 2:
+        return 0
+    amount = target - account.cash_balance
+    post_entry(db, account, entry_type="system_funding", amount=amount, transaction_id=uuid.uuid4(),
+               reference_type="mm_liquidity", reference_id=mm.id, memo="Market-maker bid liquidity")
+    return amount
+
+
 def requote_market_maker(db: Session, asset_id: int) -> dict:
-    """Replace the market maker's quotes on one asset around its intraday fair value
-    (daily reference shifted by live YouTube pace and recent order flow)."""
+    """Replace the market maker's quotes on one asset with a ladder of small orders around a
+    centre that follows the last traded price (70%) and the intraday fair value (30%), so
+    real volume walks the price while fundamentals keep pulling it back."""
+    from app.services import intraday  # live data → quote centre (see intraday.py)
+    from app.services.orders import price_band
+
     s = get_settings()
     mm = get_market_maker(db)
     asset = lock_asset(db, asset_id)
@@ -276,30 +312,34 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
     placed = 0
     if asset.trading_status != "active" or not market_hours.is_open(utcnow()):
         return {"canceled": canceled, "placed": 0}
-    from app.services import intraday  # live data → quote centre (see intraday.py)
-
     intraday.update(db, asset, mm.id)
-    ref = intraday.fair_price(asset)
+    fair = intraday.fair_price(asset)
+    last = asset.current_price or asset.reference_price
+    centre = (last * s.mm_follow_bps + fair * (10_000 - s.mm_follow_bps)) // 10_000
+    band = price_band(db, asset)
+    lo, hi = max(s.min_price, bps_down(asset.reference_price, band)), bps_up(asset.reference_price, band)
+    centre = min(max(centre, lo), hi)
+    fund_market_maker(db, mm)
     pos = db.get(Position, (mm.id, asset_id))
     inventory = (pos.quantity - pos.reserved_quantity) if pos else 0
     account = db.get(Account, mm.id)
     n_assets = max(1, db.query(MarketAsset).count())
-    cash_budget = (account.cash_balance - account.reserved_cash) // n_assets // 2
-    for bps in s.mm_spread_bps:
-        level_qty = max(1, inventory * s.mm_level_fraction_bps // 10_000) if inventory > 0 else 0
-        if level_qty > 0:
-            price = bps_up(ref, bps)
-            r = place_order(db, mm, OrderRequest(asset_id, "sell", "limit", level_qty, price,
-                                                 f"mm:{uuid.uuid4().hex}"))
+    cash_budget = (account.cash_balance - account.reserved_cash) // n_assets
+    for k in range(s.mm_levels):
+        offset = s.mm_half_spread_bps + k * s.mm_step_bps
+        size_value = s.mm_level_value * (2 + k) // 2  # deeper levels hold a little more
+        ask = bps_up(centre, offset)
+        if inventory > 0 and ask <= hi:
+            qty = min(inventory, max(1, size_value // ask), s.max_order_quantity)
+            r = place_order(db, mm, OrderRequest(asset_id, "sell", "limit", qty, ask, f"mm:{uuid.uuid4().hex}"))
             if r.order.status in ("open", "partially_filled", "filled"):
-                inventory -= level_qty
+                inventory -= qty
                 placed += 1
-        bid = bps_down(ref, bps)
-        if bid >= s.min_price and cash_budget > 0:
-            unit = buy_reservation(1, bid)
-            qty = min(cash_budget // len(s.mm_spread_bps) // unit, s.max_order_quantity)
-            if qty > 0:
-                place_order(db, mm, OrderRequest(asset_id, "buy", "limit", qty, bid,
-                                                 f"mm:{uuid.uuid4().hex}"))
+        bid = bps_down(centre, offset)
+        if bid >= lo:
+            qty = min(max(1, size_value // bid), s.max_order_quantity)
+            if buy_reservation(qty, bid) <= cash_budget:
+                place_order(db, mm, OrderRequest(asset_id, "buy", "limit", qty, bid, f"mm:{uuid.uuid4().hex}"))
+                cash_budget -= buy_reservation(qty, bid)
                 placed += 1
-    return {"canceled": canceled, "placed": placed}
+    return {"canceled": canceled, "placed": placed, "centre": centre}
