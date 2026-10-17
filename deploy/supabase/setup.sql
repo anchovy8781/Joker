@@ -1,7 +1,7 @@
 -- YouTube Exchange — Supabase scheduler setup.
 -- Run once in Supabase Dashboard → SQL Editor, AFTER the Render service is live.
 -- Replace the two placeholders below:
---   <APP_URL>      your Render address, e.g. https://youtube-exchange.onrender.com
+--   <APP_URL>      your Render address, e.g. https://youtube-exchange-q5e4.onrender.com
 --   <TICK_SECRET>  the YEX_TICK_SECRET value from Render → Environment
 --
 -- Every minute pg_cron calls the app's /api/internal/tick (via pg_net), which runs the
