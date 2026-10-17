@@ -1,0 +1,54 @@
+# Builds the Android app (debug-signed APK) on GitHub's runners, which ship with the Android SDK.
+# Download it from the run's "Artifacts" section. Free for public repos; private repos use the
+# free monthly Actions minutes.
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Install and sync Capacitor
+        working-directory: mobile
+        run: |
+          npm ci --no-audit --no-fund
+          npx cap sync android
+
+      - name: Build debug APK
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Rename APK
+        run: cp mobile/android/app/build/outputs/apk/debug/app-debug.apk youtube-exchange-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: youtube-exchange-apk
+          path: youtube-exchange-debug.apk
+          retention-days: 30

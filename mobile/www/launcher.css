@@ -1,0 +1,16 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: #0b0e13; color: #e6eaf2; font-family: system-ui, -apple-system, "Noto Sans KR", sans-serif;
+  display: flex; align-items: center; justify-content: center; padding: env(safe-area-inset-top) 20px env(safe-area-inset-bottom); }
+main { width: 100%; max-width: 380px; text-align: center; }
+.logo { width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 16px; background: #dc2626; color: #fff; font-size: 28px; line-height: 64px; }
+h1 { margin: 0; font-size: 22px; }
+.sub { margin: 4px 0 28px; color: #8b95a7; font-size: 14px; }
+label { display: block; text-align: left; font-size: 13px; color: #8b95a7; margin-bottom: 6px; }
+input { width: 100%; padding: 14px; border-radius: 12px; border: 1px solid #232b3b; background: #121722; color: #e6eaf2; font-size: 16px; }
+button { width: 100%; margin-top: 12px; padding: 14px; border: 0; border-radius: 12px; background: #e6eaf2; color: #0b0e13; font-size: 16px; font-weight: 700; }
+button.ghost { background: transparent; color: #e6eaf2; border: 1px solid #232b3b; }
+.url { font-family: ui-monospace, monospace; font-size: 12px; color: #8b95a7; word-break: break-all; }
+.error { color: #fca5a5; font-size: 13px; min-height: 1em; }
+.hint, .foot { color: #8b95a7; font-size: 12px; line-height: 1.5; }
+.foot { margin-top: 32px; }

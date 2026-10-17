@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src https: http:; img-src 'self' data:">
+<title>YouTube Exchange</title>
+<link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+<main>
+  <div class="logo" aria-hidden="true">▶</div>
+  <h1>YouTube Exchange</h1>
+  <p class="sub">유튜브 채널 가상 주식 거래 게임</p>
+
+  <section id="auto" hidden>
+    <p>저장된 서버에 연결합니다…</p>
+    <p class="url" id="saved-url"></p>
+    <button id="change" class="ghost">서버 주소 변경</button>
+  </section>
+
+  <form id="setup" hidden>
+    <label for="url">거래 서버 주소</label>
+    <input id="url" type="url" inputmode="url" autocomplete="url" placeholder="https://xxxx.trycloudflare.com" required>
+    <button type="submit">연결</button>
+    <p id="error" class="error" role="alert"></p>
+    <p class="hint">서버를 실행한 컴퓨터에서 표시된 https 주소를 입력하세요. (README의 "공개 서버 실행" 참고)</p>
+  </form>
+
+  <p class="foot">모든 거래는 현금 가치가 없는 게임 크레딧으로만 이루어집니다.</p>
+</main>
+<script src="launcher.js"></script>
+</body>
+</html>

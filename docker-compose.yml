@@ -71,5 +71,16 @@ services:
     ports:
       - "${WEB_PORT:-3000}:3000"
 
+  # Free public HTTPS address without a domain or account (Cloudflare quick tunnel).
+  # Start with:  docker compose --profile public up -d   (or ./scripts/start-public.sh)
+  # The address (https://<random>.trycloudflare.com) changes each time the tunnel restarts.
+  tunnel:
+    image: cloudflare/cloudflared:2024.12.2
+    profiles: ["public"]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--url", "http://web:3000"]
+    depends_on:
+      - web
+
 volumes:
   pgdata:

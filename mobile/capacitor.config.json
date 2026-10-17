@@ -1,0 +1,13 @@
+{
+  "appId": "com.ytx.exchange",
+  "appName": "YouTube Exchange",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  }
+}
