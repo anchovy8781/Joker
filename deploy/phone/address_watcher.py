@@ -30,6 +30,9 @@ TUNNEL_RE = re.compile(r"https://[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com")
 
 
 def current_address() -> str | None:
+    fixed = os.environ.get("YTX_PUBLIC_URL", "").strip()  # e.g. Render's RENDER_EXTERNAL_URL
+    if fixed:
+        return fixed.rstrip("/")
     domain = os.environ.get("NGROK_DOMAIN", "").strip()
     if domain and os.environ.get("NGROK_AUTHTOKEN", "").strip():
         return f"https://{domain}"

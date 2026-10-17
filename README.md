@@ -54,6 +54,10 @@ Docker만 있으면 됩니다. 랜덤 비밀값으로 `.env`를 만들고, 운�
 * 컴퓨터가 켜져 있는 동안만 서비스됩니다. 임시 터널 주소는 재시작마다 바뀝니다(앱의 "서버 주소 변경"으로 수정).
 * 고정 주소가 필요하면 무료 Cloudflare 계정의 Named Tunnel 또는 `docs/DEPLOYMENT.md`의 서버 배포를 사용하세요.
 
+### ☁️ 추천: 컴퓨터·폰 없이 24시간 운영 — Supabase + Render (무료)
+[`docs/CLOUD_DEPLOY.md`](docs/CLOUD_DEPLOY.md): Supabase(데이터베이스 + 1분 예약 작업)와 Render 무료 웹 서비스(웹+API, 고정 주소).
+배포 버튼 한 번 + SQL 한 번 실행. 앱은 고정 주소로 **첫 화면에서 바로 자동 접속**합니다.
+
 ### 컴퓨터를 꺼도 24시간 운영 — 남는 안드로이드 폰을 서버로
 [`docs/PHONE_SERVER.md`](docs/PHONE_SERVER.md): Termux에서 명령어 한 줄로 설치(무료, 루팅 불필요). 서버가 공개 주소를
 GitHub(`server-address` 브랜치)에 자동 게시하고, **앱은 주소 입력 없이 자동 연결**됩니다.

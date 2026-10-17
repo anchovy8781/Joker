@@ -1,12 +1,14 @@
-// App shell launcher: connects to the trading server automatically.
-//  1. Reads the address the phone server publishes to GitHub (branch server-address).
-//  2. Falls back to the last address that worked.
-//  3. Only asks the user when neither is available.
+// App shell launcher: connects to the trading server automatically — no address screen.
+//  1. An address published to GitHub (branch server-address) overrides everything.
+//  2. Otherwise the built-in cloud server (server-config.js).
+//  3. Otherwise the last address that worked.
+// The manual form is only reachable from the error screen ("다른 서버").
 (function () {
   var DISCOVERY = "https://api.github.com/repos/anchovy8781/Joker/contents/server.json?ref=server-address";
   // Only tunnel hosts we actually use are accepted, so a bad published value can't send
   // users to an arbitrary site.
-  var TRUSTED = /\.(trycloudflare\.com|ngrok-free\.app|ngrok\.app|ngrok\.io|duckdns\.org)$/;
+  var TRUSTED = /\.(onrender\.com|trycloudflare\.com|ngrok-free\.app|ngrok\.app|ngrok\.io|duckdns\.org)$/;
+  var BUILT_IN = window.YTX_DEFAULT_SERVER || null;
   var KEY = "ytx.server";
   var MANUAL = "ytx.manual";
   var saved = null, manual = false;
@@ -17,6 +19,8 @@
   var status = document.getElementById("status");
   var input = document.getElementById("url");
   var error = document.getElementById("error");
+  var failed = document.getElementById("failed");
+  var spinner = document.querySelector(".spinner");
 
   function normalise(v, requireTrusted) {
     v = (v || "").trim().replace(/\/+$/, "");
@@ -64,6 +68,7 @@
   }
 
   document.getElementById("change").addEventListener("click", function () { showSetup(); });
+  document.getElementById("retry").addEventListener("click", function () { start(); });
 
   setup.addEventListener("submit", function (ev) {
     ev.preventDefault();
@@ -78,23 +83,35 @@
     start();
   });
 
+  function showFailure() {
+    setup.hidden = true;
+    auto.hidden = false;
+    failed.hidden = false;
+    spinner.hidden = true;
+    status.textContent = "서버에 연결할 수 없어요. 인터넷 연결을 확인하고 다시 시도해 주세요.";
+  }
+
   function start() {
     setup.hidden = true;
     auto.hidden = false;
-    status.textContent = "서버에 자동 연결하는 중…";
+    failed.hidden = true;
+    spinner.hidden = false;
+    status.textContent = "서버에 연결하는 중…";
     // A manually entered address (e.g. a private test server) takes priority until reset.
-    var first = manual && saved ? Promise.resolve(saved) : discover();
-    first
-      .then(function (url) { return tryUrl(url, manual && url === saved); })
-      .catch(function () {
-        if (saved) {
-          status.textContent = "마지막으로 연결한 서버로 접속하는 중…";
-          return tryUrl(saved, manual).catch(function () {
-            showSetup("서버가 꺼져 있거나 주소가 바뀌었어요. 잠시 후 다시 시도하거나 주소를 입력하세요.");
-          });
-        }
-        showSetup("자동 연결할 서버를 찾지 못했어요. 서버가 켜져 있는지 확인하거나 주소를 입력하세요.");
-      });
+    var candidates = manual && saved ? [Promise.resolve(saved)] : [];
+    candidates.push(discover());
+    if (BUILT_IN) candidates.push(Promise.resolve(normalise(BUILT_IN, true)));
+    if (saved) candidates.push(Promise.resolve(saved));
+    var i = 0;
+    (function next() {
+      if (i >= candidates.length) return showFailure();
+      candidates[i++]
+        .then(function (url) {
+          if (!url) throw new Error("none");
+          return tryUrl(url, manual && url === saved);
+        })
+        .catch(next);
+    })();
   }
 
   start();

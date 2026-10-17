@@ -11,6 +11,13 @@ class Settings(BaseSettings):
 
     env: str = "development"  # development | test | production
     database_url: str = "postgresql+psycopg://yex:yex_dev_password@localhost:5432/yex"
+    # Hosted Postgres (e.g. Supabase pooler) limits connections: keep the pool small there.
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+
+    # Secret for POST /api/internal/tick (called every minute by Supabase pg_cron in the
+    # cloud deployment instead of a separate worker process). Empty = endpoint disabled.
+    tick_secret: str = ""
 
     # Security
     session_ttl_hours: int = 24 * 7

@@ -5,6 +5,7 @@
   add-channel <UC...> [title]     registers a real channel as pending + collects its data (needs API key)
   approve <channel_id> <SYMBOL> <price> <shares> --admin <name> [--celebrity]
                                   approve a pending listing as that admin (every listing needs approval)
+  bootstrap                       create the first admin from YEX_BOOTSTRAP_ADMIN_* env (no-shell hosting)
   run <job>                       run one job now: collect_data | price_update | reconcile | risk_scan | mm_requote
   reconcile                       print a reconciliation report
 """
@@ -49,6 +50,33 @@ def create_admin(username: str) -> None:
     db.add(Account(user_id=u.id, cash_balance=0, reserved_cash=0))
     db.commit()
     print(f"admin {username} created (id={u.id})")
+
+
+def bootstrap(env=None) -> None:
+    """Hosting without shell access (e.g. Render free): create the first admin from
+    YEX_BOOTSTRAP_ADMIN_USERNAME / YEX_BOOTSTRAP_ADMIN_PASSWORD, and optionally list the demo
+    stocks when YEX_SEED_DEMO=true. Idempotent: does nothing once an admin exists."""
+    import os
+
+    env = env if env is not None else os.environ
+    name = env.get("YEX_BOOTSTRAP_ADMIN_USERNAME", "").strip()
+    password = env.get("YEX_BOOTSTRAP_ADMIN_PASSWORD", "")
+    db = session_factory()()
+    has_admin = db.execute(select(User.id).where(User.role == "admin")).first() is not None
+    if name and password and not has_admin:
+        validate_credentials(name, password)
+        u = User(username=name, normalized_username=normalize_username(name),
+                 password_hash=hash_password(password), role="admin", verification_status="verified")
+        db.add(u)
+        db.flush()
+        db.add(Account(user_id=u.id, cash_balance=0, reserved_cash=0))
+        db.commit()
+        print(f"bootstrap: admin '{name}' created")
+    elif not has_admin:
+        print("bootstrap: no admin yet (set YEX_BOOTSTRAP_ADMIN_USERNAME / _PASSWORD)")
+    db.close()
+    if env.get("YEX_SEED_DEMO", "").lower() in ("1", "true", "yes") and name:
+        seed_demo(name)
 
 
 def _admin(db, username: str) -> User:
@@ -148,6 +176,8 @@ def main(argv: list[str]) -> None:
         add_channel(args[0], " ".join(args[1:]) or None)
     elif cmd == "approve":
         approve(args)
+    elif cmd == "bootstrap":
+        bootstrap()
     elif cmd == "run" and len(args) == 1:
         run_job(args[0])
     elif cmd == "reconcile":

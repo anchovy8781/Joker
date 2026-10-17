@@ -13,10 +13,13 @@
   <h1>YouTube Exchange</h1>
   <p class="sub">유튜브 채널 가상 주식 거래 게임</p>
 
-  <section id="auto" hidden>
+  <section id="auto">
     <div class="spinner" aria-hidden="true"></div>
-    <p id="status" role="status">서버에 자동 연결하는 중…</p>
-    <button id="change" class="ghost">직접 주소 입력</button>
+    <p id="status" role="status">서버에 연결하는 중…</p>
+    <div id="failed" hidden>
+      <button id="retry">다시 시도</button>
+      <button id="change" class="link">다른 서버 주소 입력</button>
+    </div>
   </section>
 
   <form id="setup" hidden>
@@ -25,11 +28,12 @@
     <button type="submit">연결</button>
     <p id="error" class="error" role="alert"></p>
     <button type="button" id="auto-retry" class="ghost">자동 연결 다시 시도</button>
-    <p class="hint">보통은 입력할 필요가 없어요. 서버 휴대폰의 ytx-status 화면에 나오는 https 주소를 입력할 수도 있어요.</p>
+    <p class="hint">보통은 입력할 필요가 없어요. 직접 운영하는 서버가 있을 때만 사용하세요.</p>
   </form>
 
   <p class="foot">모든 거래는 현금 가치가 없는 게임 크레딧으로만 이루어집니다.</p>
 </main>
+<script src="server-config.js"></script>
 <script src="launcher.js"></script>
 </body>
 </html>

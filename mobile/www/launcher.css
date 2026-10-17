@@ -17,3 +17,4 @@ button.ghost { background: transparent; color: #e6eaf2; border: 1px solid #232b3
 .spinner { width: 36px; height: 36px; margin: 8px auto 12px; border: 3px solid #232b3b; border-top-color: #e6eaf2;
   border-radius: 50%; animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+button.link { background: transparent; color: #8b95a7; font-weight: 400; font-size: 13px; text-decoration: underline; }

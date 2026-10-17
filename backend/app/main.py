@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from app.api import account, admin, auth, market, orders, social
+from app.api import account, admin, auth, internal, market, orders, social
 from app.config import get_settings
 from app.errors import AppError, install_error_handlers
 from app.security import client_ip, hit_rate_limit, ip_hash
@@ -24,6 +24,8 @@ def _check_production_settings(s) -> None:
         problems.append("YEX_CORS_ORIGINS must only contain https:// origins")
     if "yex_dev_password" in s.database_url:
         problems.append("YEX_DATABASE_URL uses the development password")
+    if s.tick_secret and len(s.tick_secret) < 32:
+        problems.append("YEX_TICK_SECRET must be 32+ characters")
     if problems:
         raise RuntimeError("Refusing to start in production: " + "; ".join(problems))
 
@@ -72,7 +74,8 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "X-CSRF-Token", "X-Requested-With", "X-Request-ID"],
     )
 
-    for r in (auth.router, market.router, account.router, orders.router, social.router, admin.router):
+    for r in (auth.router, market.router, account.router, orders.router, social.router, admin.router,
+              internal.router):
         app.include_router(r)
 
     @app.get("/healthz")

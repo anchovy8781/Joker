@@ -20,11 +20,13 @@ _SessionLocal: sessionmaker[Session] | None = None
 def get_engine() -> Engine:
     global _engine, _SessionLocal
     if _engine is None:
+        s = get_settings()
         _engine = create_engine(
-            get_settings().database_url,
+            s.database_url,
             pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
+            pool_size=s.db_pool_size,
+            max_overflow=s.db_max_overflow,
+            pool_recycle=300,  # hosted poolers close idle connections
         )
         _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False, autoflush=False)
     return _engine
