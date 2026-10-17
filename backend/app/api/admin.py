@@ -38,9 +38,10 @@ from app.schemas import (
     UserStatusIn,
 )
 from app.security import require_admin, utcnow
-from app.services import chat, jobs, listing, reconciliation, risk
+from app.services import channel_lookup, chat, jobs, listing, reconciliation, risk
 from app.services.audit import write_audit
 from app.services.ledger import lock_account, post_entry
+from app.services.youtube import get_api_provider
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -136,26 +137,45 @@ def channels(admin: User = Depends(require_admin), db: Session = Depends(get_db)
 @router.post("/channels", status_code=201)
 def register_channel(body: ChannelRegisterIn, request: Request, admin: User = Depends(require_admin),
                      db: Session = Depends(get_db)):
+    cid, title = body.youtube_channel_id.strip(), body.title
+    if body.data_source == "youtube_api":
+        cid, found_title = channel_lookup.resolve(cid, get_api_provider())
+        title = title or found_title or cid
+    elif not title:
+        raise AppError(422, "TITLE_REQUIRED", "데모 채널은 이름이 필요합니다")
     ch = run_in_transaction(db, lambda s: listing.register_channel(
-        s, youtube_channel_id=body.youtube_channel_id, title=body.title, data_source=body.data_source,
+        s, youtube_channel_id=cid, title=title, data_source=body.data_source,
         category=body.category, actor_id=admin.id, request_id=_rid(request)))
-    return {"id": ch.id, "listing_status": ch.listing_status}
+    return {"id": ch.id, "listing_status": ch.listing_status, "youtube_channel_id": cid, "title": title}
+
+
+@router.get("/channels/{channel_id}/suggestion")
+def listing_suggestion(channel_id: int, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    ch = db.get(Channel, channel_id)
+    if ch is None:
+        raise AppError(404, "CHANNEL_NOT_FOUND", "Channel not found")
+    return channel_lookup.suggest_listing(db, ch)
 
 
 @router.post("/channels/{channel_id}/approve", status_code=201)
 def approve(channel_id: int, body: ListingApproveIn, request: Request,
             admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     def tx(s):
-        a = listing.approve_listing(s, channel_id=channel_id, symbol=body.symbol,
-                                    initial_price=body.initial_price,
-                                    shares_outstanding=body.shares_outstanding, actor_id=admin.id,
-                                    request_id=_rid(request),
+        ch = s.get(Channel, channel_id)
+        if ch is None:
+            raise AppError(404, "CHANNEL_NOT_FOUND", "Channel not found")
+        sug = channel_lookup.suggest_listing(s, ch)
+        a = listing.approve_listing(s, channel_id=channel_id, symbol=body.symbol or sug["symbol"],
+                                    initial_price=body.initial_price or sug["initial_price"],
+                                    shares_outstanding=body.shares_outstanding or sug["shares_outstanding"],
+                                    actor_id=admin.id, request_id=_rid(request),
                                     celebrity_new_channel=body.celebrity_new_channel)
         write_audit(s, "listing.approve_reason", actor_id=admin.id, target_type="asset", target_id=a.id,
                     request_id=_rid(request), metadata={"reason": body.reason})
         return a
     a = run_in_transaction(db, tx)
-    return {"asset_id": a.id, "symbol": a.symbol, "trading_status": a.trading_status}
+    return {"asset_id": a.id, "symbol": a.symbol, "trading_status": a.trading_status,
+            "initial_price": a.reference_price, "shares_outstanding": a.shares_outstanding}
 
 
 @router.post("/channels/{channel_id}/reject")

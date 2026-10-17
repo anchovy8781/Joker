@@ -199,11 +199,14 @@ def reject_listing(db: Session, channel_id: int, reason: str, actor_id: int, req
     if channel.listing_status != "pending":
         raise AppError(409, "INVALID_LISTING_STATE", f"Channel is {channel.listing_status}")
     channel.listing_status = "rejected"
+    from app.services.listing_requests import refund_fee  # (circular at import time)
+    refunded = refund_fee(db, channel, actor_id)
     if channel.requested_by:
+        extra = f" 신청 비용 {refunded:,} 크레딧은 환불되었습니다." if refunded else ""
         notify(db, channel.requested_by, "listing_rejected", "상장 신청 거절",
-               f"'{channel.title}' 상장 신청이 거절되었습니다. 사유: {reason}", "/listings")
+               f"'{channel.title}' 상장 신청이 거절되었습니다. 사유: {reason}.{extra}", "/listings")
     write_audit(db, "channel.reject", actor_id=actor_id, target_type="channel", target_id=channel_id,
-                request_id=request_id, metadata={"reason": reason})
+                request_id=request_id, metadata={"reason": reason, "fee_refunded": refunded})
     return channel
 
 

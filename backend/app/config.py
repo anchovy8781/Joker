@@ -36,6 +36,9 @@ class Settings(BaseSettings):
 
     # Economy (all amounts are integer credits)
     signup_grant: int = 1_000_000
+    admin_grant: int = 100_000_000  # one-time starting balance for administrators
+    # Users pay this to request a listing; refunded in full if an administrator rejects it.
+    listing_fee: int = 100_000
     fee_bps: int = 20  # 0.20%
     # Surcharge fee for hot assets (new video upload / newly listed celebrity channel).
     # Selling a surcharged asset at a loss pays no sell fee.
@@ -54,6 +57,10 @@ class Settings(BaseSettings):
     # Market maker (IPO inventory provider). It only trades with its own inventory and cash.
     mm_spread_bps: list[int] = Field(default_factory=lambda: [50, 150, 300])
     mm_level_fraction_bps: int = 50  # each level offers 0.5% of remaining inventory
+
+    # Live channel statistics (cheap channels.list call, 1 quota unit per 50 channels).
+    live_stats_interval_minutes: int = 5
+    live_samples_keep_days: int = 7
 
     # Trading sessions (Korea time). Disable only for tests/local experiments.
     market_hours_enabled: bool = True

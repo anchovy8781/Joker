@@ -80,6 +80,7 @@ class AssetOut(BaseModel):
     trades_24h: int
     turnover_24h: int  # 거래대금 (sum of quantity × price, 24h)
     market_cap: int  # 시가총액 (current price × shares outstanding)
+    sparkline: list[int] = []
     popularity_score: int | None  # 인기도 1..50
     popularity_updated_at: datetime | None
     fee_bps: int  # fee rate a new order would get right now
@@ -270,16 +271,18 @@ class ReasonIn(Strict):
 
 
 class ChannelRegisterIn(Strict):
-    youtube_channel_id: str = Field(min_length=6, max_length=64)
-    title: str = Field(min_length=1, max_length=200)
+    # Channel ID, channel URL, @handle or bare handle (resolved server-side for youtube_api).
+    youtube_channel_id: str = Field(min_length=3, max_length=200)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
     data_source: Literal["youtube_api", "demo"]
     category: str | None = Field(default=None, max_length=64)
 
 
 class ListingApproveIn(Strict):
-    symbol: str = Field(min_length=2, max_length=12)
-    initial_price: int = Field(ge=100, le=10_000_000)
-    shares_outstanding: int = Field(ge=1_000, le=1_000_000_000)
+    # Omitted terms are filled from the server's suggestion (see channel_lookup.suggest_listing).
+    symbol: str | None = Field(default=None, min_length=2, max_length=12)
+    initial_price: int | None = Field(default=None, ge=100, le=10_000_000)
+    shares_outstanding: int | None = Field(default=None, ge=1_000, le=1_000_000_000)
     reason: str = Field(min_length=3, max_length=500)
     celebrity_new_channel: bool = False
 

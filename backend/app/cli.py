@@ -21,7 +21,7 @@ from app.db import session_factory
 from app.models import Account, Channel, User
 from app.security import hash_password
 from app.services import jobs
-from app.services.auth import normalize_username, validate_credentials
+from app.services.auth import grant_admin_bonus, normalize_username, validate_credentials
 from app.services.listing import approve_listing, register_channel
 
 DEMO_CHANNELS = [
@@ -46,8 +46,10 @@ def create_admin(username: str) -> None:
              password_hash=hash_password(password), role="admin", verification_status="verified")
     db.add(u)
     db.flush()
-    # Admins get an account row (balance 0) but no signup grant and do not appear on rankings.
+    # Admins get no signup grant (and do not appear on rankings) but a one-time admin grant.
     db.add(Account(user_id=u.id, cash_balance=0, reserved_cash=0))
+    db.flush()
+    grant_admin_bonus(db, u.id)
     db.commit()
     print(f"admin {username} created (id={u.id})")
 
@@ -74,6 +76,11 @@ def bootstrap(env=None) -> None:
         print(f"bootstrap: admin '{name}' created")
     elif not has_admin:
         print("bootstrap: no admin yet (set YEX_BOOTSTRAP_ADMIN_USERNAME / _PASSWORD)")
+    # Every administrator (including ones created before this grant existed) gets it once.
+    for admin_id in db.execute(select(User.id).where(User.role == "admin")).scalars().all():
+        if grant_admin_bonus(db, admin_id):
+            print(f"bootstrap: admin grant paid to user {admin_id}")
+    db.commit()
     db.close()
     if env.get("YEX_SEED_DEMO", "").lower() in ("1", "true", "yes") and name:
         seed_demo(name)

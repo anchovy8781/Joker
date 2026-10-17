@@ -145,8 +145,11 @@ def test_user_listing_request_flow(make_user, make_admin, db, monkeypatch):
     assert r.json()["listing_status"] == "pending"
     dup = u.post("/api/listing-requests", json={"channel": cid})
     assert dup.status_code == 409 and dup.json()["error"]["code"] == "ALREADY_REQUESTED"
+    # Without an API key a handle is looked up on the public channel page.
+    from app.services import channel_lookup
+    monkeypatch.setattr(channel_lookup, "lookup_public_page", lambda h: None)
     h = u.post("/api/listing-requests", json={"channel": "@somehandle"})
-    assert h.status_code == 422 and h.json()["error"]["code"] == "HANDLE_NEEDS_API"
+    assert h.status_code == 404 and h.json()["error"]["code"] == "CHANNEL_NOT_FOUND"
     assert u.post("/api/listing-requests", json={"channel": "not a channel"}).status_code == 422
     assert [x["youtube_channel_id"] for x in u.get("/api/listing-requests").json()] == [cid]
 

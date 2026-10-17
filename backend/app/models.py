@@ -104,7 +104,8 @@ class LedgerEntry(Base):
         CheckConstraint("amount <> 0", name="ck_ledger_amount_nonzero"),
         CheckConstraint(
             "entry_type IN ('signup_grant','trade_buy','trade_sell','trade_fee',"
-            "'admin_adjustment','correction','mission_reward','donation_sent','donation_received')",
+            "'admin_adjustment','correction','mission_reward','donation_sent','donation_received',"
+            "'admin_grant','listing_fee','listing_fee_refund')",
             name="ck_ledger_entry_type",
         ),
         Index(
@@ -112,6 +113,12 @@ class LedgerEntry(Base):
             "user_id",
             unique=True,
             postgresql_where=text("entry_type = 'signup_grant'"),
+        ),
+        Index(
+            "uq_ledger_single_admin_grant",
+            "user_id",
+            unique=True,
+            postgresql_where=text("entry_type = 'admin_grant'"),
         ),
         Index("ix_ledger_user_created", "user_id", "created_at"),
         Index("ix_ledger_reference", "reference_type", "reference_id"),
@@ -312,6 +319,24 @@ class MarketBar(Base):
     low_price: Mapped[int] = mapped_column(BigInteger, nullable=False)
     close_price: Mapped[int] = mapped_column(BigInteger, nullable=False)
     volume: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+
+
+class ChannelSample(Base):
+    """Intraday channel statistics (every few minutes) for the live chart. Short retention."""
+
+    __tablename__ = "channel_samples"
+    __table_args__ = (
+        CheckConstraint("source IN ('youtube_api','demo')", name="ck_samples_source"),
+        Index("ix_samples_channel_obs", "channel_id", "observed_at"),
+    )
+
+    id: Mapped[int] = _pk()
+    channel_id: Mapped[int] = mapped_column(ForeignKey("channels.id"), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    subscriber_count: Mapped[int | None] = mapped_column(BigInteger)
+    view_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    video_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
 class ChannelMetric(Base):

@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models import Job
 from app.security import utcnow
 
@@ -111,6 +112,8 @@ def schedule_periodic(db: Session, now: datetime | None = None) -> list[int]:
          datetime.combine(today, datetime.min.time(), now.tzinfo) + timedelta(hours=2)),
         ("risk_scan", {}, f"risk:{now.strftime('%Y-%m-%dT%H')}:{now.minute // 15}", now),
         ("mm_requote", {}, f"mm:{now.strftime('%Y-%m-%dT%H')}:{now.minute // 10}", now),
+        ("collect_live", {}, f"live:{now.strftime('%Y-%m-%dT%H')}:"
+         f"{now.minute // max(1, get_settings().live_stats_interval_minutes)}", now),
         ("activate_reservations", {}, f"activate:{now.strftime('%Y-%m-%dT%H:%M')}", now),
         ("auto_orders", {}, f"auto:{now.strftime('%Y-%m-%dT%H:%M')}", now),
     ]

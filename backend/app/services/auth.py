@@ -78,6 +78,30 @@ def grant_signup_bonus(db: Session, user_id: int, request_id: str | None = None)
     return True
 
 
+def grant_admin_bonus(db: Session, user_id: int) -> bool:
+    """One-time starting balance for an administrator (protected like the signup grant by a
+    partial UNIQUE index). Returns False if already granted or the user is not an admin."""
+    user = db.get(User, user_id)
+    if user is None or user.role != "admin":
+        return False
+    account = lock_account(db, user_id)
+    if db.execute(select(LedgerEntry.id).where(
+            LedgerEntry.user_id == user_id, LedgerEntry.entry_type == "admin_grant")).first():
+        return False
+    amount = get_settings().admin_grant
+    try:
+        with db.begin_nested():
+            post_entry(db, account, entry_type="admin_grant", amount=amount, transaction_id=uuid.uuid4(),
+                       reference_type="user", reference_id=user_id,
+                       memo="One-time administrator grant (no cash value)")
+            db.flush()
+    except IntegrityError:
+        db.refresh(account)
+        return False
+    write_audit(db, "economy.admin_grant", target_type="user", target_id=user_id, metadata={"amount": amount})
+    return True
+
+
 def _verify_turnstile(token: str | None, ip: str) -> bool:
     secret = get_settings().turnstile_secret
     if not secret:

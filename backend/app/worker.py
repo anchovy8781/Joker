@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from app.db import run_in_transaction, session_factory
 from app.models import Channel, MarketAsset, Order
-from app.services import auto_orders, collector, jobs, market_hours, orders, pricing, reconciliation, risk
+from app.services import auto_orders, collector, jobs, live, market_hours, orders, pricing, reconciliation, risk
 from app.services.listing import requote_market_maker
 from app.services.youtube import get_api_provider
 
@@ -24,6 +24,11 @@ log = logging.getLogger("yex.worker")
 @jobs.handler("collect_data")
 def _collect(db, payload):
     return collector.collect_all(db, api=get_api_provider())
+
+
+@jobs.handler("collect_live")
+def _collect_live(db, payload):
+    return live.collect_live(db, get_api_provider())
 
 
 @jobs.handler("price_update")

@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Channel, MarketAsset, Order, Trade
+from app.models import Channel, MarketAsset, MarketBar, Order, Trade
 from app.schemas import AssetOut, ChannelOut, FreshnessOut, OrderOut
 from app.security import utcnow
 from app.services.fees import fee_policy
@@ -37,7 +37,29 @@ def activity_24h(db: Session, asset_ids: list[int]) -> dict[int, tuple[int, int,
     return {a: (int(v), int(n), int(t)) for a, v, n, t in rows}
 
 
-def asset_out(asset: MarketAsset, channel: Channel, act: tuple[int, int, int] = (0, 0, 0)) -> AssetOut:
+def sparklines(db: Session, asset_ids: list[int]) -> dict[int, list[int]]:
+    """asset_id -> recent closing prices for list thumbnails: hourly over 48h, or daily over
+    two weeks when an asset traded too little for an hourly line."""
+    if not asset_ids:
+        return {}
+    now = utcnow()
+    out: dict[int, list[int]] = {}
+    for interval, since in (("1h", now - timedelta(hours=48)), ("1d", now - timedelta(days=14))):
+        rows = db.execute(
+            select(MarketBar.asset_id, MarketBar.close_price)
+            .where(MarketBar.asset_id.in_(asset_ids), MarketBar.interval == interval, MarketBar.timestamp >= since)
+            .order_by(MarketBar.asset_id, MarketBar.timestamp)).all()
+        series: dict[int, list[int]] = {}
+        for aid, close in rows:
+            series.setdefault(aid, []).append(int(close))
+        for aid, pts in series.items():
+            if aid not in out and len(pts) >= 3:
+                out[aid] = pts
+    return out
+
+
+def asset_out(asset: MarketAsset, channel: Channel, act: tuple[int, int, int] = (0, 0, 0),
+              spark: list[int] | None = None) -> AssetOut:
     policy = fee_policy(asset, utcnow())
     change = asset.current_price - asset.previous_price
     return AssetOut(
@@ -58,6 +80,7 @@ def asset_out(asset: MarketAsset, channel: Channel, act: tuple[int, int, int] = 
         trades_24h=act[1],
         turnover_24h=act[2],
         market_cap=asset.current_price * asset.shares_outstanding,
+        sparkline=spark + [asset.current_price] if spark else [],
         popularity_score=asset.popularity_score,
         popularity_updated_at=asset.popularity_updated_at,
         fee_bps=policy.bps,

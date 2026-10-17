@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
-from app.api.serialize import activity_24h, asset_out
+from app.api.serialize import activity_24h, asset_out, sparklines
+from app.services import live
 from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError
@@ -56,7 +57,8 @@ def list_assets(
         stmt = stmt.where(Channel.data_source == source)
     rows = db.execute(stmt.order_by(MarketAsset.symbol)).all()
     act = activity_24h(db, [a.id for a, _ in rows])
-    out = [asset_out(a, c, act.get(a.id, (0, 0, 0))) for a, c in rows]
+    spark = sparklines(db, [a.id for a, _ in rows])
+    out = [asset_out(a, c, act.get(a.id, (0, 0, 0)), spark.get(a.id)) for a, c in rows]
     if sort == "change":
         out.sort(key=lambda x: x.change_pct, reverse=True)
     elif sort == "volume":
@@ -81,6 +83,13 @@ def _get_asset(db: Session, asset_id: int) -> tuple[MarketAsset, Channel]:
 def get_asset(asset_id: int, db: Session = Depends(get_db)):
     a, c = _get_asset(db, asset_id)
     return asset_out(a, c, activity_24h(db, [a.id]).get(a.id, (0, 0, 0)))
+
+
+@router.get("/assets/{asset_id}/live")
+def asset_live(asset_id: int, db: Session = Depends(get_db)):
+    """Polled every 2s by the asset page: exact in-game activity + sampled YouTube rates."""
+    a, c = _get_asset(db, asset_id)
+    return live.snapshot(db, a, c)
 
 
 @router.get("/assets/{asset_id}/history", response_model=list[BarOut])
