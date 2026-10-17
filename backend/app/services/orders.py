@@ -5,6 +5,8 @@ Locking protocol (always in this order, inside one DB transaction):
     2. resting orders on the book       (FOR UPDATE)
     3. accounts of every participant    (FOR UPDATE, ascending user_id)
 Positions are only modified while the asset row is locked, so they need no extra lock.
+Every locked read uses populate_existing so a row cached earlier in the session (e.g. by a
+db.get() before the lock was granted) is refreshed instead of silently reused.
 """
 
 import hashlib
@@ -57,8 +59,9 @@ class PlaceResult:
 
 
 def lock_asset(db: Session, asset_id: int) -> MarketAsset:
+    db.flush()
     asset = db.execute(
-        select(MarketAsset).where(MarketAsset.id == asset_id).with_for_update()
+        select(MarketAsset).where(MarketAsset.id == asset_id).with_for_update().execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if asset is None:
         raise AppError(404, "ASSET_NOT_FOUND", "Asset not found")
@@ -66,7 +69,10 @@ def lock_asset(db: Session, asset_id: int) -> MarketAsset:
 
 
 def _get_position(db: Session, user_id: int, asset_id: int, create: bool) -> Position | None:
-    pos = db.get(Position, (user_id, asset_id))
+    # populate_existing: always re-read under the asset lock, never trust a cached copy
+    # (flush first so this transaction's own pending changes are never discarded).
+    db.flush()
+    pos = db.get(Position, (user_id, asset_id), populate_existing=True)
     if pos is None and create:
         pos = Position(
             user_id=user_id,
@@ -159,7 +165,8 @@ def _collect_makers(db: Session, asset_id: int, side: str, protect: int, quantit
     makers: list[Order] = []
     needed = quantity
     self_trade_blocked = False
-    candidates = list(db.execute(q.limit(MAX_MATCH_DEPTH).with_for_update()).scalars())
+    db.flush()
+    candidates = list(db.execute(q.limit(MAX_MATCH_DEPTH).with_for_update().execution_options(populate_existing=True)).scalars())
     depth_exhausted = len(candidates) == MAX_MATCH_DEPTH
     for resting in candidates:
         if needed <= 0:
@@ -304,7 +311,8 @@ def activate_scheduled(db: Session, order_id: int) -> list[Trade]:
     if peek is None:
         return []
     asset = lock_asset(db, peek.asset_id)
-    order = db.execute(select(Order).where(Order.id == order_id).with_for_update()).scalar_one()
+    db.flush()
+    order = db.execute(select(Order).where(Order.id == order_id).with_for_update().execution_options(populate_existing=True)).scalar_one()
     if order.status != "scheduled" or asset.trading_status != "active":
         return []  # halted assets keep their reservations until trading resumes
     now = utcnow()
@@ -457,7 +465,8 @@ def cancel_order(db: Session, user: User, order_id: int, reason: str = "USER_CAN
     if peek is None or peek.user_id != user.id:
         raise AppError(404, "ORDER_NOT_FOUND", "Order not found")
     lock_asset(db, peek.asset_id)
-    order = db.execute(select(Order).where(Order.id == order_id).with_for_update()).scalar_one()
+    db.flush()
+    order = db.execute(select(Order).where(Order.id == order_id).with_for_update().execution_options(populate_existing=True)).scalar_one()
     if order.status not in RESERVING:
         raise AppError(409, "ORDER_NOT_CANCELABLE", f"Order is already {order.status}")
     account = lock_accounts(db, {user.id})[user.id]
@@ -474,7 +483,8 @@ def cancel_all_for_asset(db: Session, asset_id: int, user_id: int | None, reason
     q = select(Order).where(Order.asset_id == asset_id, Order.status.in_(RESERVING))
     if user_id is not None:
         q = q.where(Order.user_id == user_id)
-    orders = list(db.execute(q.order_by(Order.id).with_for_update()).scalars())
+    db.flush()
+    orders = list(db.execute(q.order_by(Order.id).with_for_update().execution_options(populate_existing=True)).scalars())
     if not orders:
         return 0
     accounts = lock_accounts(db, {o.user_id for o in orders})

@@ -135,7 +135,8 @@ def approve_listing(
     """Every listing is an explicit administrator decision (recorded with the admin's id)."""
     s = get_settings()
     _require_admin(db, actor_id)
-    channel = db.execute(select(Channel).where(Channel.id == channel_id).with_for_update()).scalar_one_or_none()
+    db.flush()
+    channel = db.execute(select(Channel).where(Channel.id == channel_id).with_for_update().execution_options(populate_existing=True)).scalar_one_or_none()
     if channel is None:
         raise AppError(404, "CHANNEL_NOT_FOUND", "Channel not found")
     if channel.listing_status != "pending":

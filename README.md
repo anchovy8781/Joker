@@ -54,6 +54,10 @@ Docker만 있으면 됩니다. 랜덤 비밀값으로 `.env`를 만들고, 운�
 * 컴퓨터가 켜져 있는 동안만 서비스됩니다. 임시 터널 주소는 재시작마다 바뀝니다(앱의 "서버 주소 변경"으로 수정).
 * 고정 주소가 필요하면 무료 Cloudflare 계정의 Named Tunnel 또는 `docs/DEPLOYMENT.md`의 서버 배포를 사용하세요.
 
+### 컴퓨터를 꺼도 24시간 운영 — 남는 안드로이드 폰을 서버로
+[`docs/PHONE_SERVER.md`](docs/PHONE_SERVER.md): Termux에서 명령어 한 줄로 설치(무료, 루팅 불필요). 서버가 공개 주소를
+GitHub(`server-address` 브랜치)에 자동 게시하고, **앱은 주소 입력 없이 자동 연결**됩니다.
+
 ### Android APK
 * GitHub 저장소의 **Actions → Android APK** 실행 결과 하단 **Artifacts**에서 `youtube-exchange-apk`를 내려받아 설치합니다(디버그 서명, "출처를 알 수 없는 앱 설치" 허용 필요).
 * `mobile/`이 바뀌면 자동 빌드되고, Actions 화면의 "Run workflow"로 수동 실행도 됩니다.

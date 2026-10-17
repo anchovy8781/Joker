@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src https: http:; img-src 'self' data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src https://api.github.com https: http:; img-src 'self' data:">
 <title>YouTube Exchange</title>
 <link rel="stylesheet" href="launcher.css">
 </head>
@@ -14,9 +14,9 @@
   <p class="sub">유튜브 채널 가상 주식 거래 게임</p>
 
   <section id="auto" hidden>
-    <p>저장된 서버에 연결합니다…</p>
-    <p class="url" id="saved-url"></p>
-    <button id="change" class="ghost">서버 주소 변경</button>
+    <div class="spinner" aria-hidden="true"></div>
+    <p id="status" role="status">서버에 자동 연결하는 중…</p>
+    <button id="change" class="ghost">직접 주소 입력</button>
   </section>
 
   <form id="setup" hidden>
@@ -24,7 +24,8 @@
     <input id="url" type="url" inputmode="url" autocomplete="url" placeholder="https://xxxx.trycloudflare.com" required>
     <button type="submit">연결</button>
     <p id="error" class="error" role="alert"></p>
-    <p class="hint">서버를 실행한 컴퓨터에서 표시된 https 주소를 입력하세요. (README의 "공개 서버 실행" 참고)</p>
+    <button type="button" id="auto-retry" class="ghost">자동 연결 다시 시도</button>
+    <p class="hint">보통은 입력할 필요가 없어요. 서버 휴대폰의 ytx-status 화면에 나오는 https 주소를 입력할 수도 있어요.</p>
   </form>
 
   <p class="foot">모든 거래는 현금 가치가 없는 게임 크레딧으로만 이루어집니다.</p>

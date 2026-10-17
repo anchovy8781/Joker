@@ -4,10 +4,13 @@
   "webDir": "www",
   "server": {
     "androidScheme": "https",
-    "allowNavigation": ["*"]
+    "allowNavigation": [
+      "*"
+    ]
   },
   "android": {
     "allowMixedContent": false,
-    "webContentsDebuggingEnabled": false
+    "webContentsDebuggingEnabled": false,
+    "overrideUserAgent": "YTXApp/1.0 (Android)"
   }
 }

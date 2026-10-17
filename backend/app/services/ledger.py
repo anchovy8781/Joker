@@ -10,8 +10,9 @@ from app.models import Account, LedgerEntry
 
 
 def lock_account(db: Session, user_id: int) -> Account:
+    db.flush()  # write pending changes first: the locked read below refreshes cached rows
     account = db.execute(
-        select(Account).where(Account.user_id == user_id).with_for_update()
+        select(Account).where(Account.user_id == user_id).with_for_update().execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if account is None:
         raise AppError(404, "ACCOUNT_NOT_FOUND", "Account not found")
@@ -20,11 +21,12 @@ def lock_account(db: Session, user_id: int) -> Account:
 
 def lock_accounts(db: Session, user_ids: set[int]) -> dict[int, Account]:
     """Lock several accounts in ascending user_id order to minimise deadlocks."""
+    db.flush()  # write pending changes first: the locked read below refreshes cached rows
     rows = db.execute(
         select(Account)
         .where(Account.user_id.in_(sorted(user_ids)))
         .order_by(Account.user_id)
-        .with_for_update()
+        .with_for_update().execution_options(populate_existing=True)
     ).scalars()
     return {a.user_id: a for a in rows}
 

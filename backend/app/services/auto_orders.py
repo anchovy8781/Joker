@@ -43,7 +43,8 @@ def create(db: Session, user: User, *, asset_id: int, side: str, trigger_conditi
 
 
 def cancel(db: Session, user: User, auto_id: int) -> AutoOrder:
-    ao = db.execute(select(AutoOrder).where(AutoOrder.id == auto_id).with_for_update()).scalar_one_or_none()
+    db.flush()
+    ao = db.execute(select(AutoOrder).where(AutoOrder.id == auto_id).with_for_update().execution_options(populate_existing=True)).scalar_one_or_none()
     if ao is None or ao.user_id != user.id:
         raise AppError(404, "AUTO_ORDER_NOT_FOUND", "Auto order not found")
     if ao.status != "active":
