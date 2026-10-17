@@ -75,7 +75,7 @@ export function AutoOrderPanel({ asset }: { asset: Asset }) {
         </div>
         <button className="btn-primary w-full py-2" disabled={!trigger || !qty}>자동 주문 등록</button>
         {msg && <p role="status" className="text-xs">{msg}</p>}
-        <p className="text-[11px] text-muted">조건이 충족되는 순간 일반 주문과 같은 규칙으로 제출됩니다. 그때 잔액·보유 수량이 부족하면 실패로 처리되고 알림이 옵니다. 장외 시간에 충족되면 예약 주문이 됩니다.</p>
+        <p className="text-xs text-muted">조건이 충족되는 순간 일반 주문과 같은 규칙으로 제출됩니다. 그때 잔액·보유 수량이 부족하면 실패로 처리되고 알림이 옵니다. 장외 시간에 충족되면 예약 주문이 됩니다.</p>
       </form>
       {!!list.data?.length && (
         <ul className="space-y-1.5 text-xs">
@@ -86,7 +86,7 @@ export function AutoOrderPanel({ asset }: { asset: Asset }) {
               </span>
               <span className="text-muted" title={a.failure_reason ?? `만료 ${dateTime(a.expires_at)}`}>{STATUS[a.status] ?? a.status}</span>
               {a.status === "active" && (
-                <button className="btn-ghost px-2 py-0.5 text-[11px]" onClick={async () => { await api(`/api/auto-orders/${a.id}/cancel`, { method: "POST" }); list.reload(); }}>취소</button>
+                <button className="btn-ghost px-2 py-0.5 text-xs" onClick={async () => { await api(`/api/auto-orders/${a.id}/cancel`, { method: "POST" }); list.reload(); }}>취소</button>
               )}
             </li>
           ))}

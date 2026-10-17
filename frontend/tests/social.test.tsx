@@ -44,3 +44,24 @@ describe("OrderPanel outside trading hours", () => {
     expect(screen.getByText(/예상 수수료 \(1% 할증\)/)).toBeInTheDocument();
   });
 });
+
+describe("ChatBox donation boxes", () => {
+  it("shows a box card with progress and marks finished boxes from the live list", async () => {
+    const now = new Date().toISOString();
+    const box = { id: 7, room: "global", title: "상장비 모아요", goal: 50000, raised: 20000, owner: "kim",
+                  state: "open", created_at: now, closes_at: now };
+    const done = { ...box, id: 8, title: "끝난 기부함" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => String(url).includes("/boxes")
+      ? json([box])
+      : json([
+        { id: 1, room: "global", username: "kim", body: "🎁", created_at: now, kind: "donation_box", ref_id: 7, box },
+        { id: 2, room: "global", username: "lee", body: "🎁", created_at: now, kind: "donation_box", ref_id: 8, box: done },
+        { id: 3, room: "global", username: "park", body: "💝 kim님의 기부함에 5,000 기부", created_at: now, kind: "donation", ref_id: 1 },
+      ]));
+    render(<ChatBox room="global" />);
+    await waitFor(() => expect(screen.getAllByText("상장비 모아요").length).toBeGreaterThan(0));
+    expect(screen.getAllByText("40%").length).toBe(2); // both box cards show their progress
+    expect(screen.getByText("마감")).toBeInTheDocument(); // no longer in the open list
+    expect(screen.getByText(/kim님의 기부함에 5,000 기부/)).toBeInTheDocument();
+  });
+});

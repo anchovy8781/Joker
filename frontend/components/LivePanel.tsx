@@ -20,7 +20,42 @@ export type Live = {
     views_per_hour?: number | null; subs_per_hour?: number | null;
     est_views_now?: number; est_subs_now?: number | null;
   };
+  intraday?: { adj_bps: number; fair_price: number; reference_price: number; updated_at: string | null;
+               detail: { yt_bps: number; subs_bps: number; flow_bps: number; views_per_hour: number | null;
+                         views_per_hour_7d: number | null } | null };
 };
+
+const bp = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${(Math.abs(v) / 100).toFixed(2)}%`;
+
+function FairValue({ i }: { i: NonNullable<Live["intraday"]> }) {
+  const d = i.detail;
+  const parts: [string, number][] = d ? [["유튜브 조회 속도", d.yt_bps], ["구독자 증가세", d.subs_bps], ["게임 매수세", d.flow_bps]] : [];
+  return (
+    <div className="rounded-xl bg-panel2 px-3 py-2.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs text-muted" title="하루 기준가에 실시간 지표를 반영해 5분마다 다시 계산한 값. 시장조성자의 호가가 이 가격을 중심으로 움직여요.">장중 적정가 ⓘ</span>
+        <span className="text-xs text-muted">기준가 ₩{credits(i.reference_price)}</span>
+      </div>
+      <div className="mt-0.5 flex items-baseline gap-2">
+        <span className="text-lg font-bold tabular-nums">₩{credits(i.fair_price)}</span>
+        <span className={`text-sm font-semibold ${i.adj_bps > 0 ? "text-up" : i.adj_bps < 0 ? "text-down" : "text-muted"}`}>{bp(i.adj_bps)}</span>
+      </div>
+      {parts.length > 0 && (
+        <div className="mt-1.5 grid grid-cols-3 gap-1 text-center text-xs">
+          {parts.map(([label, v]) => (
+            <div key={label} className="rounded-lg bg-bg/60 px-1 py-1">
+              <div className="text-muted">{label}</div>
+              <div className={v > 0 ? "text-up" : v < 0 ? "text-down" : "text-muted"}>{bp(v)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {d?.views_per_hour != null && d.views_per_hour_7d != null && d.views_per_hour_7d > 0 && (
+        <div className="mt-1 text-xs text-muted">지금 조회 속도는 평소(7일 평균)의 {Math.round((d.views_per_hour / d.views_per_hour_7d) * 100)}%</div>
+      )}
+    </div>
+  );
+}
 
 const POLL_MS = 2_000;
 const KEEP_POINTS = 180; // 6 minutes of 2-second points
@@ -132,7 +167,9 @@ export function LivePanel({ assetId }: { assetId: number }) {
         <Tile label="인기도" value={L.asset.popularity_score ? `${L.asset.popularity_score} / 50` : "—"} sub={`마지막 체결 ${timeAgo(L.asset.last_trade_at)}`} />
       </div>
 
-      <h3 className="pt-1 text-sm font-bold text-muted">유튜브 채널 {yt?.source === "demo" && <span className="ml-1 rounded bg-accent/15 px-1 text-[10px] text-accent">DEMO 데이터</span>}</h3>
+      {L.intraday && <FairValue i={L.intraday} />}
+
+      <h3 className="pt-1 text-sm font-bold text-muted">유튜브 채널 {yt?.source === "demo" && <span className="ml-1 rounded bg-accent/15 px-1 text-[11px] text-accent">DEMO 데이터</span>}</h3>
       {yt?.views === undefined ? (
         <p className="rounded-xl bg-panel2 px-3 py-3 text-sm text-muted">채널 측정값을 모으는 중이에요 (5분마다 측정).</p>
       ) : (
@@ -157,7 +194,7 @@ export function LivePanel({ assetId }: { assetId: number }) {
               <Sparkline points={subsSpark} width={360} height={48} className="w-full" />
             </div>
           </div>
-          <p className="text-[11px] leading-relaxed text-muted">
+          <p className="text-xs leading-relaxed text-muted">
             게임 내 거래 수치는 실제 체결 기준이에요. 유튜브 수치는 무료 API 한도 때문에 5분마다 측정하며
             (마지막 측정 {timeAgo(yt.observed_at)}), &lsquo;추정&rsquo;은 최근 증가 속도로 계산한 값이에요.
           </p>

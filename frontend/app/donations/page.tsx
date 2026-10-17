@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { Card, Empty, LoginPrompt, Stat } from "@/components/ui";
@@ -44,7 +45,23 @@ export default function Donations() {
           <Stat label="오늘 보낸 기부" value={credits(box.sent_today)} sub={<span className="text-muted">남은 한도 {credits(box.send_remaining)}</span>} />
         </div>
       )}
-      <Card title="🎁 기부하기">
+      <Card title="🎁 채팅 기부함" right={<Link href="/chat" className="text-sm text-muted">채팅방 가기 ›</Link>}>
+        <p className="text-sm text-muted">채팅방에서 <b className="text-text">＋ → 🎁 기부함 만들기</b>로 목표 금액(최대 500,000)을 정해 모금할 수 있어요. 기부함은 하루에 1번 만들 수 있고 24시간 동안 열려 있어요.</p>
+        <p className="mt-2 text-sm">{data?.my_boxes?.can_open_today === false ? "오늘은 이미 기부함을 만들었어요. 내일 다시 만들 수 있어요." : "✓ 오늘 기부함을 만들 수 있어요."}</p>
+        {data?.my_boxes && data.my_boxes.boxes.length > 0 && (
+          <ul className="mt-3 space-y-2">
+            {data.my_boxes.boxes.map((b) => (
+              <li key={b.id} className="rounded-xl bg-panel2 px-3 py-2 text-sm">
+                <div className="flex justify-between gap-2"><b className="truncate">{b.title}</b>
+                  <span className="text-xs text-muted">{b.state === "open" ? "모금 중" : b.raised >= b.goal ? "목표 달성" : "종료"}</span></div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-bg"><div className="h-full bg-up" style={{ width: `${Math.min(100, (b.raised / b.goal) * 100)}%` }} /></div>
+                <div className="mt-1 text-xs text-muted">₩{credits(b.raised)} / ₩{credits(b.goal)} · {b.room === "global" ? "전체 채팅" : "종목방"}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+      <Card title="💝 직접 선물하기">
         <form onSubmit={send} className="space-y-3">
           <label className="block text-xs text-muted">받는 사람 아이디
             <input className="input mt-1" value={to} onChange={(e) => setTo(e.target.value)} autoComplete="off" />
@@ -63,7 +80,7 @@ export default function Donations() {
           <button className="btn-primary w-full py-2" disabled={pending || !to || !amount}>{pending ? "처리 중…" : "기부하기"}</button>
           {msg && <p role="status" className="text-sm">{msg}</p>}
         </form>
-        <ul className="mt-4 space-y-1 text-[11px] text-muted">
+        <ul className="mt-4 space-y-1 text-xs text-muted">
           <li>• 기부함 최대 금액: 한 사람이 하루에 받을 수 있는 기부는 500,000 크레딧까지입니다 (보내기도 동일).</li>
           <li>• 가입 72시간 후, 체결 5회 이상부터 기부할 수 있습니다. 같은 네트워크 계정끼리는 기부할 수 없습니다.</li>
           <li>• 크레딧은 현금 가치가 없으며 현금으로 바꿀 수 없습니다.</li>
@@ -80,7 +97,7 @@ export default function Donations() {
                 </div>
                 <div className="text-right">
                   <div className={`font-mono ${h.outgoing ? "text-down" : "text-up"}`}>{h.outgoing ? "−" : "+"}{credits(h.amount)}</div>
-                  <div className="text-[11px] text-muted">{dateTime(h.created_at)}</div>
+                  <div className="text-xs text-muted">{dateTime(h.created_at)}</div>
                 </div>
               </li>
             ))}

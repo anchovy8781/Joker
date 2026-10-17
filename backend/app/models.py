@@ -201,6 +201,10 @@ class MarketAsset(Base):
     new_video_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     popularity_score: Mapped[int | None] = mapped_column(Integer)  # 1..50
     popularity_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Intraday fair-value shift applied to market-maker quotes (live YouTube + order flow).
+    intraday_adj_bps: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    intraday_detail: Mapped[dict | None] = mapped_column(JSONB)
+    intraday_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_at: Mapped[datetime] = _now()
 
@@ -570,6 +574,8 @@ class ChatMessage(Base):
     hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     hidden_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     hidden_reason: Mapped[str | None] = mapped_column(String(300))
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="text")
+    ref_id: Mapped[int | None] = mapped_column(BigInteger)  # donation box / donation id
 
 
 class Notification(Base):
@@ -669,3 +675,46 @@ class Donation(Base):
     message: Mapped[str | None] = mapped_column(String(100))
     transaction_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, unique=True)
     created_at: Mapped[datetime] = _now()
+    box_id: Mapped[int | None] = mapped_column(ForeignKey("donation_boxes.id"), index=True)
+
+
+class DonationBox(Base):
+    """A fundraiser opened in a chat room. One per user per KST day; goal ≤ daily box limit."""
+
+    __tablename__ = "donation_boxes"
+    __table_args__ = (
+        CheckConstraint("goal > 0", name="ck_dbox_goal"),
+        CheckConstraint("raised >= 0 AND raised <= goal", name="ck_dbox_raised"),
+        CheckConstraint("status IN ('open','closed')", name="ck_dbox_status"),
+        UniqueConstraint("owner_id", "kst_date", name="uq_dbox_owner_day"),
+        Index("ix_dbox_room", "room", "id"),
+    )
+
+    id: Mapped[int] = _pk()
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    room: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(60), nullable=False)
+    goal: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    raised: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    status: Mapped[str] = mapped_column(String(8), nullable=False, server_default="open")
+    kst_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = _now()
+    closes_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PriceAlert(Base):
+    __tablename__ = "price_alerts"
+    __table_args__ = (
+        CheckConstraint("direction IN ('above','below')", name="ck_alert_direction"),
+        CheckConstraint("target_price > 0", name="ck_alert_price"),
+        Index("ix_alerts_user", "user_id", "id"),
+    )
+
+    id: Mapped[int] = _pk()
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("market_assets.id"), nullable=False)
+    direction: Mapped[str] = mapped_column(String(5), nullable=False)
+    target_price: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = _now()
+    triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

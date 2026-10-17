@@ -16,7 +16,7 @@ export function OrderBookView({ book, onPick }: { book: OrderBook | null; onPick
   );
   return (
     <div>
-      <div className="grid grid-cols-2 px-2 pb-1 text-[11px] text-muted"><span>호가</span><span className="text-right">잔량</span></div>
+      <div className="grid grid-cols-2 px-2 pb-1 text-xs text-muted"><span>호가</span><span className="text-right">잔량</span></div>
       {asks.length === 0 ? <Empty>매도 호가 없음</Empty> : asks.map((l) => <Row key={`a${l.price}`} price={l.price} qty={l.quantity} side="ask" />)}
       <div className="my-1 border-t border-line" />
       {book.bids.length === 0 ? <Empty>매수 호가 없음</Empty> : book.bids.map((l) => <Row key={`b${l.price}`} price={l.price} qty={l.quantity} side="bid" />)}

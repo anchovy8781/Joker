@@ -56,7 +56,9 @@ class Settings(BaseSettings):
 
     # Market maker (IPO inventory provider). It only trades with its own inventory and cash.
     mm_spread_bps: list[int] = Field(default_factory=lambda: [50, 150, 300])
-    mm_level_fraction_bps: int = 50  # each level offers 0.5% of remaining inventory
+    mm_level_fraction_bps: int = 50
+    intraday_max_adj_bps: int = 400  # quote centre may move at most ±4% off the daily reference
+    price_alerts_max_active: int = 20  # each level offers 0.5% of remaining inventory
 
     # Live channel statistics (cheap channels.list call, 1 quota unit per 50 channels).
     live_stats_interval_minutes: int = 5
@@ -72,6 +74,8 @@ class Settings(BaseSettings):
     # Donation box (user-to-user virtual credit gifts)
     donation_box_daily_limit: int = 500_000  # max a user can receive (and send) per KST day
     donation_min_amount: int = 100
+    donation_box_min_goal: int = 1_000
+    donation_box_hours: int = 24  # a chat donation box stays open this long
     donation_min_account_age_hours: int = 72
     donation_min_trades: int = 5
 

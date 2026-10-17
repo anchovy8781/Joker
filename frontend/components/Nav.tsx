@@ -72,7 +72,7 @@ export function Nav() {
         <div className="grid grid-cols-5">
           {TABS.map((t) => (
             <Link key={t.href} href={t.href}
-              className={`flex flex-col items-center gap-0.5 py-2 text-[11px] ${active(t.href) ? "text-text" : "text-muted"}`}
+              className={`flex flex-col items-center gap-0.5 py-2 text-xs ${active(t.href) ? "text-text" : "text-muted"}`}
               aria-current={active(t.href) ? "page" : undefined}>
               <span className="text-lg leading-none" aria-hidden>{t.icon}</span>
               {t.label}

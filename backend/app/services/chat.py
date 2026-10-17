@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.errors import AppError
-from app.models import Channel, ChatMessage, MarketAsset, User
+from app.models import Channel, ChatMessage, DonationBox, MarketAsset, User
 from app.security import hit_rate_limit, utcnow
 from app.services.audit import write_audit
 
@@ -61,6 +61,14 @@ def post_message(db: Session, user: User, room: str, body: str) -> ChatMessage:
     return msg
 
 
+def post_event(db: Session, user: User, room: str, kind: str, ref_id: int, text: str) -> ChatMessage:
+    """A donation box / gift announcement in a room (posted by the acting user)."""
+    msg = ChatMessage(room=room, user_id=user.id, body=text[:MAX_LEN], kind=kind, ref_id=ref_id)
+    db.add(msg)
+    db.flush()
+    return msg
+
+
 def list_messages(db: Session, room: str, after_id: int = 0, limit: int = 50) -> list[dict]:
     validate_room(db, room)
     q = (select(ChatMessage, User.username).join(User, User.id == ChatMessage.user_id)
@@ -70,8 +78,32 @@ def list_messages(db: Session, room: str, after_id: int = 0, limit: int = 50) ->
         rows = db.execute(q).all()
     else:
         rows = list(reversed(db.execute(q.order_by(ChatMessage.id.desc()).limit(limit)).all()))
-    return [{"id": m.id, "room": m.room, "username": name, "body": m.body, "created_at": m.created_at}
-            for m, name in rows]
+    out = [{"id": m.id, "room": m.room, "username": name, "body": m.body, "created_at": m.created_at,
+            "kind": m.kind, "ref_id": m.ref_id} for m, name in rows]
+    box_ids = {m["ref_id"] for m in out if m["kind"] == "donation_box" and m["ref_id"]}
+    if box_ids:
+        from app.services.donations import box_out
+
+        boxes = {b.id: box_out(b, owner) for b, owner in db.execute(
+            select(DonationBox, User.username).join(User, User.id == DonationBox.owner_id)
+            .where(DonationBox.id.in_(box_ids))).all()}
+        for m in out:
+            if m["kind"] == "donation_box":
+                m["box"] = boxes.get(m["ref_id"])
+    return out
+
+
+def open_boxes(db: Session, room: str) -> list[dict]:
+    """Donation boxes still collecting in a room (newest first), for the pinned bar."""
+    from app.services.donations import box_out
+
+    validate_room(db, room)
+    now = utcnow()
+    rows = db.execute(select(DonationBox, User.username).join(User, User.id == DonationBox.owner_id)
+                      .where(DonationBox.room == room, DonationBox.status == "open", DonationBox.closes_at > now,
+                             DonationBox.raised < DonationBox.goal)
+                      .order_by(DonationBox.id.desc()).limit(10)).all()
+    return [box_out(b, owner, now) for b, owner in rows]
 
 
 def hide_message(db: Session, message_id: int, admin_id: int, reason: str, request_id: str | None) -> ChatMessage:

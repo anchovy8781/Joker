@@ -11,8 +11,8 @@ from app.services import jobs
 def test_schedule_is_idempotent(db):
     first = jobs.schedule_periodic(db)
     second = jobs.schedule_periodic(db)
-    assert len(first) == 8 and second == []
-    assert db.execute(select(func.count(Job.id))).scalar_one() == 8
+    assert len(first) == 9 and second == []
+    assert db.execute(select(func.count(Job.id))).scalar_one() == 9
 
 
 def test_worker_runs_jobs_end_to_end(db, asset):

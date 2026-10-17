@@ -90,21 +90,21 @@ function Listing() {
               const ap = approve[c.id] ?? { symbol: "", price: "", shares: "", celebrity: false };
               return (
                 <tr key={c.id}>
-                  <td><div className="max-w-[220px] truncate">{c.title}</div><div className="font-mono text-[10px] text-muted">{c.youtube_channel_id}</div>
-                    {c.requested_by && <div className="text-[10px] text-sky-300">요청: {c.requested_by}{c.request_note && ` · ${c.request_note}`}</div>}
-                    {c.asset?.celebrity_until && <div className="text-[10px] text-orange-300">🔥 유명인 신규 채널 할증</div>}</td>
+                  <td><div className="max-w-[220px] truncate">{c.title}</div><div className="font-mono text-[11px] text-muted">{c.youtube_channel_id}</div>
+                    {c.requested_by && <div className="text-[11px] text-sky-300">요청: {c.requested_by}{c.request_note && ` · ${c.request_note}`}</div>}
+                    {c.asset?.celebrity_until && <div className="text-[11px] text-orange-300">🔥 유명인 신규 채널 할증</div>}</td>
                   <td>{c.data_source === "demo" ? "DEMO" : "YouTube API"}</td>
                   <td>{c.listing_status}</td>
                   <td><FreshnessBadge f={c.freshness} /> <span className="text-xs text-muted">{c.data_quality_status}</span></td>
                   <td>{c.asset ? <span className="font-mono">{c.asset.symbol} · {credits(c.asset.reference_price)} · {c.asset.trading_status}</span> : "—"}
-                    {c.asset?.halt_reason && <div className="max-w-[220px] truncate text-[10px] text-red-300">{c.asset.halt_reason}</div>}</td>
+                    {c.asset?.halt_reason && <div className="max-w-[220px] truncate text-[11px] text-red-300">{c.asset.halt_reason}</div>}</td>
                   <td className="space-x-1">
                     {c.listing_status === "pending" && (
                       <span className="inline-flex flex-wrap gap-1">
                         <input className="input w-20 py-1" placeholder="심볼 자동" value={ap.symbol} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, symbol: e.target.value.toUpperCase() } })} />
                         <input className="input w-24 py-1" placeholder="가격 자동" value={ap.price} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, price: e.target.value } })} title="최초 가격" />
                         <input className="input w-28 py-1" placeholder="주식 수 자동" value={ap.shares} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, shares: e.target.value } })} title="발행 주식 수" />
-                        <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={ap.celebrity} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, celebrity: e.target.checked } })} />유명인 신규</label>
+                        <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={ap.celebrity} onChange={(e) => setApprove({ ...approve, [c.id]: { ...ap, celebrity: e.target.checked } })} />유명인 신규</label>
                         <button className="btn-primary py-1" onClick={() => { const r = askReason("상장 승인"); if (r) run(`/api/admin/channels/${c.id}/approve`, { symbol: ap.symbol || null, initial_price: ap.price ? Number(ap.price) : null, shares_outstanding: ap.shares ? Number(ap.shares) : null, reason: r, celebrity_new_channel: ap.celebrity }, reload); }}>승인</button>
                         <button className="btn-danger py-1" onClick={() => { const r = askReason("상장 거절"); if (r) run(`/api/admin/channels/${c.id}/reject`, { reason: r }, reload); }}>거절</button>
                       </span>
@@ -163,7 +163,7 @@ function AuditTab() {
           <thead><tr><th>#</th><th>시각</th><th>행위자</th><th>action</th><th>대상</th><th>내용</th></tr></thead>
           <tbody>{data.map((a) => (
             <tr key={a.id}><td>{a.id}</td><td className="text-muted">{dateTime(a.created_at)}</td><td>{a.actor_id ?? "system"}</td><td className="font-mono">{a.action}</td>
-              <td>{a.target_type} {a.target_id}</td><td className="max-w-[420px] truncate font-mono text-[10px] text-muted" title={JSON.stringify(a.metadata)}>{JSON.stringify(a.metadata)}</td></tr>))}
+              <td>{a.target_type} {a.target_id}</td><td className="max-w-[420px] truncate font-mono text-[11px] text-muted" title={JSON.stringify(a.metadata)}>{JSON.stringify(a.metadata)}</td></tr>))}
           </tbody>
         </table></div>
       )}
@@ -191,7 +191,7 @@ function Jobs() {
             <thead><tr><th>#</th><th>작업</th><th>상태</th><th>시도</th><th>완료</th><th>오류/결과</th></tr></thead>
             <tbody>{jobs.data.map((j) => (
               <tr key={j.id}><td>{j.id}</td><td>{j.job_type}</td><td className={j.status === "failed" ? "text-red-300" : ""}>{j.status}</td><td>{j.attempts}</td>
-                <td className="text-muted">{dateTime(j.finished_at)}</td><td className="max-w-[400px] truncate font-mono text-[10px]">{j.last_error ?? JSON.stringify(j.result)}</td></tr>))}
+                <td className="text-muted">{dateTime(j.finished_at)}</td><td className="max-w-[400px] truncate font-mono text-[11px]">{j.last_error ?? JSON.stringify(j.result)}</td></tr>))}
             </tbody>
           </table></div>
         )}
@@ -223,7 +223,7 @@ function ReconTab() {
           <tbody>{data.map((r) => (
             <tr key={r.id}><td>{r.id}</td><td className="text-muted">{dateTime(r.created_at)}</td><td className={r.status === "ok" ? "text-emerald-300" : "text-red-300"}>{r.status === "ok" ? "● 일치" : "⚠ 불일치"}</td>
               <td className="num">{r.checked_accounts}</td><td className="num">{credits(r.totals.total_cash)}</td><td className="num">{credits(r.totals.fees_burned)}</td>
-              <td className="max-w-[300px] truncate font-mono text-[10px]">{r.mismatches.length ? JSON.stringify(r.mismatches) : "—"}</td></tr>))}
+              <td className="max-w-[300px] truncate font-mono text-[11px]">{r.mismatches.length ? JSON.stringify(r.mismatches) : "—"}</td></tr>))}
           </tbody>
         </table>
       )}
@@ -290,9 +290,9 @@ function ChatModeration() {
           {data.map((m) => (
             <li key={m.id} className={`flex items-start gap-2 py-2 ${m.hidden_at ? "opacity-50" : ""}`}>
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] text-muted">#{m.id} · {m.room} · {m.username} · {dateTime(m.created_at)}</div>
+                <div className="text-xs text-muted">#{m.id} · {m.room} · {m.username} · {dateTime(m.created_at)}</div>
                 <p className="whitespace-pre-wrap break-words">{m.body}</p>
-                {m.hidden_at && <div className="text-[11px] text-red-300">숨김: {m.hidden_reason}</div>}
+                {m.hidden_at && <div className="text-xs text-red-300">숨김: {m.hidden_reason}</div>}
               </div>
               {!m.hidden_at && <button className="btn-danger shrink-0 py-0.5 text-xs" onClick={() => { const r = askReason("메시지 숨김"); if (r) run(`/api/admin/chat/${m.id}/hide`, { reason: r }, reload); }}>숨김</button>}
               <button className="btn-ghost shrink-0 py-0.5 text-xs" onClick={() => { const r = askReason("작성자 제한"); if (r) run(`/api/admin/users/${m.user_id}/status`, { status: "restricted", reason: r }, reload); }}>제한</button>

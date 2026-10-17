@@ -37,7 +37,7 @@ export default function Rankings() {
         ))}
       </div>
       {tab === "experts" ? (
-        <Card title="🧠 초고수 PICK (최근 7일)" right={<span className="text-[11px] text-muted">자산 상위 고수들이 순매수한 종목 · 2명 이상 일치 시 표시</span>}>
+        <Card title="🧠 초고수 PICK (최근 7일)" right={<span className="text-xs text-muted">자산 상위 고수들이 순매수한 종목 · 2명 이상 일치 시 표시</span>}>
           <ErrorBox error={picks.error} />
           {!picks.data ? <Empty>불러오는 중…</Empty> : picks.data.length === 0 ? <Empty>아직 집계할 고수 매수가 없습니다</Empty> : (
             <ol className="divide-y divide-line">
@@ -58,7 +58,7 @@ export default function Rankings() {
               ))}
             </ol>
           )}
-          <p className="mt-2 text-[11px] text-muted">고수 = 체결 5회 이상인 사용자 중 총자산 상위 30명. 개인은 공개되지 않습니다. 투자 권유가 아닙니다.</p>
+          <p className="mt-2 text-xs text-muted">고수 = 체결 5회 이상인 사용자 중 총자산 상위 30명. 개인은 공개되지 않습니다. 투자 권유가 아닙니다.</p>
         </Card>
       ) : (
         <Card title={`${TABS.find(([k]) => k === tab)?.[1]} 순위`}>

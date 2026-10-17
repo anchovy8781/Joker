@@ -260,6 +260,28 @@ class AutoOrderIn(Strict):
     days: int = Field(default=7, ge=1, le=30)
 
 
+class BoxOpenIn(Strict):
+    title: str = Field(min_length=2, max_length=60)
+    goal: int = Field(gt=0, le=500_000)
+
+
+class BoxGiveIn(Strict):
+    amount: int = Field(gt=0, le=500_000)
+    message: str | None = Field(default=None, max_length=200)
+
+
+class TipIn(Strict):
+    to: str = Field(min_length=3, max_length=21)
+    amount: int = Field(gt=0, le=500_000)
+    message: str | None = Field(default=None, max_length=200)
+
+
+class PriceAlertIn(Strict):
+    asset_id: int = Field(gt=0)
+    direction: Literal["above", "below"]
+    target_price: int = Field(gt=0, le=1_000_000_000)
+
+
 class DonationIn(Strict):
     recipient: str = Field(min_length=3, max_length=20)
     amount: int = Field(gt=0, le=500_000)

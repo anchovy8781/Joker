@@ -267,7 +267,8 @@ def auto_resume_if_safe(db: Session, asset: MarketAsset) -> bool:
 
 
 def requote_market_maker(db: Session, asset_id: int) -> dict:
-    """Replace the market maker's quotes on one asset around the current reference price."""
+    """Replace the market maker's quotes on one asset around its intraday fair value
+    (daily reference shifted by live YouTube pace and recent order flow)."""
     s = get_settings()
     mm = get_market_maker(db)
     asset = lock_asset(db, asset_id)
@@ -275,7 +276,10 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
     placed = 0
     if asset.trading_status != "active" or not market_hours.is_open(utcnow()):
         return {"canceled": canceled, "placed": 0}
-    ref = asset.reference_price
+    from app.services import intraday  # live data → quote centre (see intraday.py)
+
+    intraday.update(db, asset, mm.id)
+    ref = intraday.fair_price(asset)
     pos = db.get(Position, (mm.id, asset_id))
     inventory = (pos.quantity - pos.reserved_quantity) if pos else 0
     account = db.get(Account, mm.id)

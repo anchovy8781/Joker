@@ -11,6 +11,7 @@ import { useMarketHours } from "@/components/MarketHoursBadge";
 import { PriceChart } from "@/components/PriceChart";
 import { ChannelAvatar } from "@/components/ChannelAvatar";
 import { LivePanel } from "@/components/LivePanel";
+import { PriceAlerts } from "@/components/PriceAlerts";
 import { Card, Change, DemoBadge, Empty, ErrorBox, FreshnessBadge, TradingBadge } from "@/components/ui";
 import type { Account, Asset, Bar, MetricPoint, Order, OrderBook, Position, Trade } from "@/lib/api";
 import { api } from "@/lib/api";
@@ -52,7 +53,8 @@ export default function AssetPage() {
   const updates = useApi<PriceUpdate[]>(`/api/assets/${id}/price-updates`);
   const account = useApi<Account>(user ? "/api/account" : null, 5_000);
   const hours = useMarketHours();
-  const [panel, setPanel] = useState<"order" | "auto">("order");
+  const [panel, setPanel] = useState<"order" | "auto" | "alert">("order");
+  const [sideReq, setSideReq] = useState<{ side: "buy" | "sell"; n: number } | undefined>();
   const positions = useApi<Position[]>(user ? "/api/account/positions" : null, 5_000);
   const orders = useApi<Order[]>(user ? `/api/orders?asset_id=${id}&limit=20` : null, 5_000);
 
@@ -65,7 +67,11 @@ export default function AssetPage() {
   const refresh = () => { asset.reload(); book.reload(); trades.reload(); account.reload(); positions.reload(); orders.reload(); };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-16 lg:pb-0">
+      <div className="fixed inset-x-0 bottom-[calc(60px+env(safe-area-inset-bottom))] z-30 flex gap-2 px-4 pb-2 lg:hidden">
+        <a href="#order" onClick={() => { setPanel("order"); setSideReq({ side: "buy", n: Date.now() }); }} className="flex-1 rounded-2xl bg-up py-3 text-center font-bold text-white shadow-lg">매수</a>
+        <a href="#order" onClick={() => { setPanel("order"); setSideReq({ side: "sell", n: Date.now() }); }} className="flex-1 rounded-2xl bg-down py-3 text-center font-bold text-white shadow-lg">매도</a>
+      </div>
       <div className="flex items-center gap-3">
         <ChannelAvatar src={a.channel.thumbnail_url} title={a.channel.title} seed={a.symbol} size={64} />
         <div className="min-w-0 flex-1">
@@ -163,13 +169,15 @@ export default function AssetPage() {
         </div>
 
         <div className="space-y-4">
-          <Card title={
-            <div className="flex gap-1">
+          <Card className="scroll-mt-20" title={
+            <div id="order" className="flex gap-1">
               <button onClick={() => setPanel("order")} className={`rounded px-2 py-0.5 ${panel === "order" ? "bg-panel2" : "text-muted"}`}>주문</button>
               <button onClick={() => setPanel("auto")} className={`rounded px-2 py-0.5 ${panel === "auto" ? "bg-panel2" : "text-muted"}`}>자동 매매</button>
+              <button onClick={() => setPanel("alert")} className={`rounded px-2 py-0.5 ${panel === "alert" ? "bg-panel2" : "text-muted"}`}>🔔 알림</button>
             </div>}>
-            {panel === "auto" ? (user ? <AutoOrderPanel asset={a} /> : <p className="text-sm text-muted">로그인 후 이용하세요.</p>) : <>
-            <OrderPanel asset={a} loggedIn={!!user} pickedPrice={picked} marketOpen={hours.data?.open ?? true}
+            {panel === "alert" ? (user ? <PriceAlerts assetId={a.id} current={a.current_price} /> : <p className="text-sm text-muted">로그인 후 이용하세요.</p>)
+              : panel === "auto" ? (user ? <AutoOrderPanel asset={a} /> : <p className="text-sm text-muted">로그인 후 이용하세요.</p>) : <>
+            <OrderPanel asset={a} loggedIn={!!user} pickedPrice={picked} marketOpen={hours.data?.open ?? true} requestedSide={sideReq}
               availableCash={account.data?.available_cash ?? null}
               availableShares={pos ? pos.quantity - pos.reserved_quantity : user ? 0 : null}
               onDone={refresh} />

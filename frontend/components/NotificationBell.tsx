@@ -41,7 +41,7 @@ export function NotificationBell() {
         onClick={() => setOpen(!open)} aria-label={`알림 ${unread}개 읽지 않음`} aria-expanded={open}>
         🔔
         {unread > 0 && (
-          <span className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-red-600 px-1 text-center text-[10px] font-bold leading-[18px] text-white">
+          <span className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-red-600 px-1 text-center text-[11px] font-bold leading-[18px] text-white">
             {unread > 99 ? "99+" : unread}
           </span>
         )}
@@ -62,7 +62,7 @@ export function NotificationBell() {
                     <div className="min-w-0 flex-1">
                       <div className="flex justify-between gap-2">
                         <span className="truncate font-medium">{!n.read && <span className="sr-only">읽지 않음 </span>}{n.title}</span>
-                        <span className="shrink-0 text-[11px] text-muted">{timeAgo(n.created_at)}</span>
+                        <span className="shrink-0 text-xs text-muted">{timeAgo(n.created_at)}</span>
                       </div>
                       {n.body && <p className="mt-0.5 text-xs text-muted">{n.body}</p>}
                     </div>

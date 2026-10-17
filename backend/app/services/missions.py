@@ -1,7 +1,7 @@
 """Missions: server-verified goals that pay a fixed credit reward into the ledger.
 
-Rewards are a deliberate, bounded credit source (one-time missions + one small daily
-mission). Each payout is a `mission_reward` ledger entry and a `user_missions` row whose
+Rewards are a deliberate, bounded credit source (one-time missions + a few small daily
+missions). Each payout is a `mission_reward` ledger entry and a `user_missions` row whose
 UNIQUE(user_id, mission_code, period) constraint makes double payment impossible.
 """
 
@@ -16,7 +16,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import AppError
-from app.models import Channel, ChatMessage, Order, Position, Trade, User, UserMission
+from app.models import (
+    AutoOrder, Channel, ChatMessage, Donation, DonationBox, Order, Position, PriceAlert, Trade, User, UserMission,
+)
 from app.security import utcnow
 from app.services.audit import write_audit
 from app.services.ledger import lock_account, post_entry
@@ -57,8 +59,36 @@ def _profitable_sells(db, uid):
         Trade.seller_id == uid, Trade.seller_realized_pnl > 0)).scalar_one()
 
 
-def _chat_messages(db, uid):
-    return db.execute(select(func.count(ChatMessage.id)).where(ChatMessage.user_id == uid)).scalar_one()
+def _chat_messages(db, uid, since=None, until=None):
+    q = select(func.count(ChatMessage.id)).where(ChatMessage.user_id == uid, ChatMessage.kind == "text")
+    if since is not None:
+        q = q.where(ChatMessage.created_at >= since, ChatMessage.created_at < until)
+    return db.execute(q).scalar_one()
+
+
+def _daily_chat(db, uid):
+    return _chat_messages(db, uid, *_day_window(utcnow()))
+
+
+def _donations_sent(db, uid):
+    return db.execute(select(func.count(Donation.id)).where(Donation.sender_id == uid)).scalar_one()
+
+
+def _boxes_opened(db, uid):
+    return db.execute(select(func.count(DonationBox.id)).where(DonationBox.owner_id == uid)).scalar_one()
+
+
+def _alerts_set(db, uid):
+    return db.execute(select(func.count(PriceAlert.id)).where(PriceAlert.user_id == uid)).scalar_one()
+
+
+def _auto_orders(db, uid):
+    return db.execute(select(func.count(AutoOrder.id)).where(AutoOrder.user_id == uid)).scalar_one()
+
+
+def _traded_value(db, uid):
+    return int(db.execute(select(func.coalesce(func.sum(Trade.quantity * Trade.execution_price), 0)).where(
+        or_(Trade.buyer_id == uid, Trade.seller_id == uid))).scalar_one())
 
 
 def _approved_requests(db, uid):
@@ -91,6 +121,19 @@ MISSIONS: list[Mission] = [
     Mission("first_chat", "인사하기", "단체 채팅에 첫 메시지 남기기", 5_000, "once", 1, _chat_messages),
     Mission("listing_scout", "상장 스카우터", "내가 신청한 채널이 상장 승인되기", 30_000, "once", 1, _approved_requests),
     Mission("daily_trade", "오늘의 거래", "오늘(한국 시간) 1회 이상 체결하기", 3_000, "daily", 1, _daily_trades),
+    # Daily
+    Mission("daily_checkin", "출석 체크", "오늘 접속해서 받기", 5_000, "daily", 1, lambda db, u: 1),
+    Mission("daily_trade_5", "부지런한 투자자", "오늘 5회 이상 체결하기", 10_000, "daily", 5,
+            lambda db, u: _trade_count(db, u, *_day_window(utcnow()))),
+    Mission("daily_chat", "오늘의 수다", "오늘 채팅 메시지 1개 남기기", 2_000, "daily", 1, _daily_chat),
+    # One-time
+    Mission("diversify_5", "포트폴리오 완성", "서로 다른 5개 종목을 동시에 보유하기", 50_000, "once", 5, _holdings),
+    Mission("big_hand", "큰손 데뷔", "누적 거래대금 1,000,000 달성하기", 50_000, "once", 1_000_000, _traded_value),
+    Mission("trades_50", "단골 트레이더", "누적 50회 체결하기", 40_000, "once", 50, lambda db, u: _trade_count(db, u)),
+    Mission("first_alert", "알림 설정", "가격 알림을 1개 걸어두기", 5_000, "once", 1, _alerts_set),
+    Mission("first_auto_order", "자동 매매 입문", "자동 매수/매도 주문 1개 만들기", 10_000, "once", 1, _auto_orders),
+    Mission("first_donation", "따뜻한 마음", "다른 사용자에게 1회 기부하기", 10_000, "once", 1, _donations_sent),
+    Mission("open_box", "기부함 열기", "채팅방에 기부함 만들기", 5_000, "once", 1, _boxes_opened),
 ]
 BY_CODE = {m.code: m for m in MISSIONS}
 

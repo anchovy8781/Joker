@@ -6,9 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db, run_in_transaction
 from app.models import AutoOrder, Notification, User
-from app.schemas import AutoOrderIn, ChatIn, DonationIn, ListingRequestIn, MarkReadIn
+from app.schemas import (
+    AutoOrderIn, BoxGiveIn, BoxOpenIn, ChatIn, DonationIn, ListingRequestIn, MarkReadIn, PriceAlertIn, TipIn,
+)
 from app.security import require_user, utcnow
-from app.services import auto_orders, chat, donations, listing_requests, market_hours, missions
+from app.services import alerts, auto_orders, chat, donations, listing_requests, market_hours, missions
 from app.services.youtube import get_api_provider
 
 router = APIRouter(prefix="/api", tags=["social"])
@@ -31,6 +33,69 @@ def chat_post(room: str, body: ChatIn, user: User = Depends(require_user), db: S
     db.commit()
     return {"id": msg.id, "room": msg.room, "username": user.username, "body": msg.body,
             "created_at": msg.created_at}
+
+
+@router.get("/chat/{room}/boxes")
+def chat_boxes(room: str, db: Session = Depends(get_db)):
+    return chat.open_boxes(db, room)
+
+
+@router.post("/chat/{room}/boxes", status_code=201)
+def chat_open_box(room: str, body: BoxOpenIn, request: Request, user: User = Depends(require_user),
+                  db: Session = Depends(get_db)):
+    uid = user.id
+    box = run_in_transaction(db, lambda s: donations.open_box(s, s.get(User, uid), room, body.title, body.goal,
+                                                               _rid(request)))
+    return donations.box_out(box, user.username)
+
+
+@router.post("/donation-boxes/{box_id}/give", status_code=201)
+def give_to_box(box_id: int, body: BoxGiveIn, request: Request, user: User = Depends(require_user),
+                db: Session = Depends(get_db)):
+    uid = user.id
+
+    def tx(s):
+        d, box = donations.give_to_box(s, s.get(User, uid), box_id, body.amount, body.message, _rid(request))
+        return d.id, donations.box_out(box, s.get(User, box.owner_id).username)
+    did, box = run_in_transaction(db, tx)
+    return {"donation_id": did, "box": box}
+
+
+@router.post("/donation-boxes/{box_id}/close")
+def close_box(box_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    uid = user.id
+    box = run_in_transaction(db, lambda s: donations.close_box(s, s.get(User, uid), box_id))
+    return donations.box_out(box, user.username)
+
+
+@router.post("/chat/{room}/tip", status_code=201)
+def chat_tip(room: str, body: TipIn, request: Request, user: User = Depends(require_user),
+             db: Session = Depends(get_db)):
+    uid = user.id
+    d = run_in_transaction(db, lambda s: donations.tip(s, s.get(User, uid), room, body.to, body.amount,
+                                                        body.message, _rid(request)))
+    return {"donation_id": d.id, "amount": d.amount}
+
+
+# ---------------------------------------------------------------- price alerts
+@router.get("/price-alerts")
+def list_alerts(asset_id: int | None = None, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    return alerts.mine(db, user, asset_id)
+
+
+@router.post("/price-alerts", status_code=201)
+def create_alert(body: PriceAlertIn, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    uid = user.id
+    a = run_in_transaction(db, lambda s: alerts.create(s, s.get(User, uid), body.asset_id, body.direction,
+                                                        body.target_price))
+    return {"id": a.id, "active": True}
+
+
+@router.post("/price-alerts/{alert_id}/cancel")
+def cancel_alert(alert_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    uid = user.id
+    run_in_transaction(db, lambda s: alerts.cancel(s, s.get(User, uid), alert_id))
+    return {"id": alert_id, "active": False}
 
 
 # ---------------------------------------------------------------- notifications
@@ -147,7 +212,8 @@ def cancel_auto_order(auto_id: int, user: User = Depends(require_user), db: Sess
 # ---------------------------------------------------------------- donation box
 @router.get("/donations")
 def donation_box(user: User = Depends(require_user), db: Session = Depends(get_db)):
-    return {"box": donations.box_status(db, user.id), "history": donations.history(db, user.id)}
+    return {"box": donations.box_status(db, user.id), "history": donations.history(db, user.id),
+            "my_boxes": donations.my_boxes(db, user)}
 
 
 @router.post("/donations", status_code=201)

@@ -111,7 +111,8 @@ def schedule_periodic(db: Session, now: datetime | None = None) -> list[int]:
         ("reconcile", {}, f"reconcile:{today}",
          datetime.combine(today, datetime.min.time(), now.tzinfo) + timedelta(hours=2)),
         ("risk_scan", {}, f"risk:{now.strftime('%Y-%m-%dT%H')}:{now.minute // 15}", now),
-        ("mm_requote", {}, f"mm:{now.strftime('%Y-%m-%dT%H')}:{now.minute // 10}", now),
+        ("mm_requote", {}, f"mm:{now.strftime('%Y-%m-%dT%H')}:{now.minute // 5}", now),
+        ("price_alerts", {}, f"alerts:{now.strftime('%Y-%m-%dT%H:%M')}", now),
         ("collect_live", {}, f"live:{now.strftime('%Y-%m-%dT%H')}:"
          f"{now.minute // max(1, get_settings().live_stats_interval_minutes)}", now),
         ("activate_reservations", {}, f"activate:{now.strftime('%Y-%m-%dT%H:%M')}", now),

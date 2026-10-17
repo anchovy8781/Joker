@@ -143,6 +143,10 @@ def snapshot(db: Session, asset: MarketAsset, channel: Channel, now: datetime | 
                  "spread_bps": (round((best_ask - best_bid) / best_ask * 10_000) if best_bid and best_ask else None)},
         "ticks": [{"t": t, "price": p, "qty": q, "side": side} for t, p, q, side in reversed(ticks)],
         "youtube": yt,
+        "intraday": {"adj_bps": asset.intraday_adj_bps, "detail": asset.intraday_detail,
+                     "fair_price": max(get_settings().min_price,
+                                       asset.reference_price * (10_000 + asset.intraday_adj_bps) // 10_000),
+                     "reference_price": asset.reference_price, "updated_at": asset.intraday_updated_at},
     }
     _cache[asset.id] = (time.monotonic(), data)
     return data

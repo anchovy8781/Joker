@@ -6,7 +6,7 @@ import { credits, estimateFee, orderStatusLabel, reasonLabel } from "@/lib/forma
 
 type Result = { order: Order; fills: Trade[]; replayed: boolean };
 
-export function OrderPanel({ asset, availableCash, availableShares, pickedPrice, onDone, loggedIn, marketOpen = true }: {
+export function OrderPanel({ asset, availableCash, availableShares, pickedPrice, onDone, loggedIn, marketOpen = true, requestedSide }: {
   asset: Asset;
   availableCash: number | null;
   availableShares: number | null;
@@ -14,6 +14,7 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
   onDone?: () => void;
   loggedIn: boolean;
   marketOpen?: boolean;
+  requestedSide?: { side: "buy" | "sell"; n: number };
 }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [type, setType] = useState<"limit" | "market">("limit");
@@ -27,6 +28,7 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
   const [key, setKey] = useState(newIdempotencyKey);
 
   useEffect(() => { if (pickedPrice) { setPrice(String(pickedPrice)); setType("limit"); } }, [pickedPrice]);
+  useEffect(() => { if (requestedSide) setSide(requestedSide.side); }, [requestedSide]);
   useEffect(() => { setKey(newIdempotencyKey()); }, [side, type, qty, price, asset.id]);
 
   const q = Number.parseInt(qty, 10);
@@ -39,6 +41,13 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
     return { notional, fee: estimateFee(notional, asset.fee_bps) };
   }, [valid, q, p, type, asset.reference_price, asset.fee_bps]);
   const surcharge = asset.fee_bps > 20;
+  // Largest quantity the account can afford (buy) or holds (sell), for the quick-fill buttons.
+  const unitPrice = type === "limit" && Number.isInteger(p) && p > 0 ? p : asset.current_price;
+  const maxQty = side === "buy"
+    ? Math.floor((availableCash ?? 0) / (unitPrice + Math.ceil((unitPrice * asset.fee_bps) / 10000)))
+    : availableShares ?? 0;
+  const fill = (fraction: number) => setQty(String(Math.max(fraction === 1 ? maxQty : 1, Math.floor(maxQty * fraction))));
+  const nudge = (bps: number) => setPrice(String(Math.max(1, Math.round((Number.isInteger(p) && p > 0 ? p : asset.current_price) * (1 + bps / 10000)))));
 
   const halted = asset.trading_status !== "active";
 
@@ -67,7 +76,7 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
       <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
         {(["buy", "sell"] as const).map((s) => (
           <button key={s} type="button" onClick={() => setSide(s)} aria-pressed={side === s}
-            className={`rounded-md py-2 text-sm font-semibold ${side === s ? (s === "buy" ? "bg-up text-black" : "bg-down text-white") : "text-muted"}`}>
+            className={`rounded-md py-2 text-sm font-semibold ${side === s ? (s === "buy" ? "bg-up text-white" : "bg-down text-white") : "text-muted"}`}>
             {s === "buy" ? "▲ 매수" : "▼ 매도"}
           </button>
         ))}
@@ -83,10 +92,22 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
       {type === "limit" && (
         <label className="block text-xs text-muted">가격 (크레딧)
           <input className="input mt-1" inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/\D/g, ""))} aria-label="지정가" />
+          <span className="mt-1.5 flex gap-1.5">
+            <button type="button" className="chip flex-1 px-2 py-1.5 text-xs" onClick={() => nudge(-100)}>−1%</button>
+            <button type="button" className="chip flex-1 px-2 py-1.5 text-xs" onClick={() => setPrice(String(asset.current_price))}>현재가</button>
+            <button type="button" className="chip flex-1 px-2 py-1.5 text-xs" onClick={() => nudge(100)}>+1%</button>
+          </span>
         </label>
       )}
       <label className="block text-xs text-muted">수량 (주)
         <input className="input mt-1" inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value.replace(/\D/g, ""))} aria-label="수량" />
+        {loggedIn && maxQty > 0 && (
+          <span className="mt-1.5 flex gap-1.5">
+            {([[0.1, "10%"], [0.25, "25%"], [0.5, "50%"], [1, "최대"]] as const).map(([f, l]) => (
+              <button key={l} type="button" className="chip flex-1 px-2 py-1.5 text-xs" onClick={() => fill(f)}>{l}</button>
+            ))}
+          </span>
+        )}
       </label>
       <div className="space-y-1 rounded-lg bg-panel2 p-3 text-xs text-muted">
         <div className="flex justify-between"><span>{side === "buy" ? "주문 가능 현금" : "매도 가능 수량"}</span>
@@ -95,15 +116,15 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
           <div className="flex justify-between"><span>예상 체결 금액{type === "market" && " (기준가)"}</span><span className="font-mono text-text">{credits(est.notional)}</span></div>
           <div className="flex justify-between"><span>예상 수수료 ({asset.fee_bps / 100}%{surcharge && " 할증"})</span><span className="font-mono text-text">{credits(est.fee)}</span></div>
         </>}
-        <p className="pt-1 text-[11px]">실제 체결가와 수수료는 서버가 계산합니다. {type === "market" && "시장가는 기준가 ±5% 범위에서만 체결되고 잔량은 취소됩니다."}
+        <p className="pt-1 text-xs">실제 체결가와 수수료는 서버가 계산합니다. {type === "market" && "시장가는 기준가 ±5% 범위에서만 체결되고 잔량은 취소됩니다."}
           {surcharge && side === "sell" && " 할증 종목을 손실 매도하면 매도 수수료가 면제됩니다."}</p>
-        {!marketOpen && <p className="pt-1 text-[11px] text-amber-300">◐ 장마감 중 — 예약 주문으로 접수되어 다음 장 시작 시 접수 순서대로 제출됩니다.</p>}
+        {!marketOpen && <p className="pt-1 text-xs text-amber-300">◐ 장마감 중 — 예약 주문으로 접수되어 다음 장 시작 시 접수 순서대로 제출됩니다.</p>}
       </div>
       {!loggedIn ? (
         <a href="/login" className="btn-primary block w-full text-center">로그인 후 거래</a>
       ) : (
         <button type="submit" disabled={!valid || pending || halted}
-          className={`w-full rounded-lg py-2.5 text-sm font-bold disabled:opacity-40 ${side === "buy" ? "bg-up text-black" : "bg-down text-white"}`}>
+          className={`w-full rounded-lg py-2.5 text-sm font-bold disabled:opacity-40 ${side === "buy" ? "bg-up text-white" : "bg-down text-white"}`}>
           {halted ? "⏸ 거래 정지 중" : pending ? "서버 처리 중…" : `${side === "buy" ? "매수" : "매도"} ${marketOpen ? "주문" : "예약"}`}
         </button>
       )}

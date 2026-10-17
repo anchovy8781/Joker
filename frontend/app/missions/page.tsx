@@ -32,9 +32,17 @@ export default function Missions() {
   const groups: [string, Mission[]][] = [
     ["오늘의 미션 (매일 자정 초기화)", (data ?? []).filter((m) => m.period === "daily")],
     ["도전 미션 (1회)", (data ?? []).filter((m) => m.period === "once")],
-  ];
+  ].map(([t, l]) => [t as string, [...(l as Mission[])].sort((a, b) =>
+    Number(b.claimable) - Number(a.claimable) || Number(a.claimed) - Number(b.claimed))]);
+  const claimableNow = (data ?? []).filter((m) => m.claimable);
   return (
     <div className="space-y-4">
+      {claimableNow.length > 0 && (
+        <button className="btn-primary w-full py-3 text-base" disabled={busy !== null}
+          onClick={async () => { for (const m of claimableNow) await claim(m.code); }}>
+          🎁 받을 수 있는 보상 {claimableNow.length}개 · {credits(claimableNow.reduce((s, m) => s + m.reward, 0))} 모두 받기
+        </button>
+      )}
       {msg && <div role="status" className="rounded-lg border border-line bg-panel2 px-3 py-2 text-sm">{msg}</div>}
       {groups.map(([title, list]) => (
         <Card key={title} title={title}>
@@ -47,9 +55,9 @@ export default function Missions() {
                     <div className="text-xs text-muted">{m.description}</div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-line" role="progressbar"
                       aria-valuemin={0} aria-valuemax={m.target} aria-valuenow={m.progress}>
-                      <div className="h-full bg-emerald-400" style={{ width: `${(m.progress / m.target) * 100}%` }} />
+                      <div className="h-full bg-emerald-400" style={{ width: `${Math.min(100, (m.progress / m.target) * 100)}%` }} />
                     </div>
-                    <div className="mt-1 text-[11px] text-muted">{m.progress}/{m.target} · 보상 {credits(m.reward)} 크레딧</div>
+                    <div className="mt-1 text-xs text-muted">{credits(Math.min(m.progress, m.target))} / {credits(m.target)} · 보상 <b className="text-text">{credits(m.reward)}</b> 크레딧</div>
                   </div>
                   <button className="btn-primary shrink-0" disabled={!m.claimable || busy === m.code} onClick={() => claim(m.code)}>
                     {m.claimed ? "완료" : m.claimable ? "보상 받기" : "진행 중"}

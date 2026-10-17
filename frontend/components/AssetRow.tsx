@@ -23,8 +23,8 @@ export function AssetRow({ a, rank, fav, onFav, right }: {
           <div className="truncate text-[15px] font-bold text-text">{channelName(a)}</div>
           <div className="flex items-center gap-1.5 truncate text-sm text-muted">
             <span className="font-mono">{a.symbol}</span>
-            {a.is_demo && <span className="rounded bg-accent/15 px-1 text-[10px] font-bold text-accent">DEMO</span>}
-            {a.trading_status !== "active" && <span className="rounded bg-zinc-500/20 px-1 text-[10px] font-bold text-zinc-300">정지</span>}
+            {a.is_demo && <span className="rounded bg-accent/15 px-1 text-[11px] font-bold text-accent">DEMO</span>}
+            {a.trading_status !== "active" && <span className="rounded bg-zinc-500/20 px-1 text-[11px] font-bold text-zinc-300">정지</span>}
             {a.fee_bps > 20 && <span title="할증 수수료 적용 중">🔥</span>}
           </div>
         </div>

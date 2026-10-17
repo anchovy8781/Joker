@@ -120,7 +120,7 @@ export default function Home() {
                   <ChannelAvatar src={x.channel.thumbnail_url} title={x.channel.title} seed={x.symbol} size={48} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-400">NEW</span>
+                      <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-bold text-emerald-400">NEW</span>
                       <span className="truncate font-bold">{channelName(x)}</span>
                     </div>
                     <div className="truncate text-sm text-muted">{x.symbol} · {timeAgo(x.channel.listed_at)} · <ChangeText percent={x.change_pct} /></div>
