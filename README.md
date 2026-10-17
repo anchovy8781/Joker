@@ -31,6 +31,34 @@ docker-compose.yml  db · migrate · api · worker · web
                                           worker(작업 큐) ───────▶ PostgreSQL ──▶ YouTube Data API
 ```
 
+## 1-1. 추가 기능 (2차)
+
+| 기능 | 내용 |
+| --- | --- |
+| 거래 시간 (한국시간) | 월·목 17:00–23:10, **화·수·금 16:00–23:10 (추가 거래시간)**, 토·일 13:00–22:00. 장외에는 매수·매도 **예약 주문**(시장가·지정가)만 가능 — 현금·주식을 즉시 예약하고 장 시작 시 접수 순서대로 제출 |
+| 지정가 자동 매수/매도 | "현재가가 X 이하(이상)가 되면 지정가/시장가로 N주" 조건 주문. 조건 충족 시 일반 주문 엔진으로 제출, 잔액 부족 시 실패 알림 |
+| 기부함 | 사용자 간 게임 크레딧 기부(제로섬 원장 기록). 하루에 받을 수 있는 금액 최대 **500,000** (보내기도 동일), 1회 100~500,000. 다중 계정 악용 방지: 가입 72시간 + 체결 5회 이상, 같은 네트워크 계정 간 기부 차단 |
+| 인기도 1~50 | 구독자 규모 25% · 조회 증가 20% · **좋아요율** 20% · **좋아요 수** 15% · 화제성(인기 급상승/신규 영상) 10% · 거래대금 10%. 좋아요는 최근 업로드 10개의 공개 좋아요 수(YouTube API `playlistItems`+`videos`) |
+| 주가 엔진 v2 | 실적 점수에 좋아요율 변화·인기도 변화 추가, 수급은 시간 감쇠(반감기 6시간) + 유동성 신뢰도(얇은 시장은 덜 움직임), 심리에 인기도 수준 반영. 기존 ±8% 한도 유지 |
+| 상장 승인제 | **모든 상장은 관리자 승인 필요**(CLI 자동 상장 제거). 사용자 상장 요청은 **매일 오후 7시부터**, **전체 합계 하루 25개**. 초과 시 "오늘의 상장 요청 최대한도에 도달했습니다" 표시 |
+| 원격 승인 | 상장 요청이 오면 관리자에게 알림 → 폰 앱의 관리자 화면(`/admin?tab=listing`)에서 바로 승인/거절 |
+| 할증 수수료 | 신규 영상 업로드 후 48시간, 유명인 신규 채널(승인 시 체크) 상장 후 30일 동안 수수료 **1%**. 이 종목을 **손실 매도하면 매도 수수료 면제**. 수수료율은 주문 시점에 고정 |
+| 단체 채팅 · 알림 · 미션 · 순위 | 전체/종목별 채팅, 체결·정지·기부·미션 알림, 1회/일일 미션 보상, 거래대금·시가총액·거래량·인기도·초고수 PICK 순위 |
+| 모바일 / APK | 하단 탭바 모바일 UI + PWA. Android 앱은 `mobile/`(Capacitor), GitHub Actions가 APK 빌드 |
+
+### 공개 서버 실행 (무료, 내 컴퓨터에서)
+```bash
+./scripts/start-public.sh
+```
+Docker만 있으면 됩니다. 랜덤 비밀값으로 `.env`를 만들고, 운영 모드(HTTPS 쿠키·보안 검사)로 전체 스택을 띄운 뒤 Cloudflare 무료 임시 터널로 `https://xxxx.trycloudflare.com` 주소를 출력합니다(계정·도메인·결제 불필요). 이 주소를 앱 첫 화면에 입력하세요.
+* 컴퓨터가 켜져 있는 동안만 서비스됩니다. 임시 터널 주소는 재시작마다 바뀝니다(앱의 "서버 주소 변경"으로 수정).
+* 고정 주소가 필요하면 무료 Cloudflare 계정의 Named Tunnel 또는 `docs/DEPLOYMENT.md`의 서버 배포를 사용하세요.
+
+### Android APK
+* GitHub 저장소의 **Actions → Android APK** 실행 결과 하단 **Artifacts**에서 `youtube-exchange-apk`를 내려받아 설치합니다(디버그 서명, "출처를 알 수 없는 앱 설치" 허용 필요).
+* `mobile/`이 바뀌면 자동 빌드되고, Actions 화면의 "Run workflow"로 수동 실행도 됩니다.
+* 앱은 입력한 거래 서버를 앱 안 WebView로 엽니다. 뒤로가기 버튼은 앱 안에서 이전 화면으로 이동합니다.
+
 ## 2. 설치 및 실행
 
 ### A. Docker (권장)
@@ -38,8 +66,8 @@ docker-compose.yml  db · migrate · api · worker · web
 ```bash
 cp .env.example .env            # 값 확인 (비밀 값은 직접 생성)
 docker compose up -d --build    # db → migrate → api, worker → web
-docker compose exec api python -m app.cli seed-demo          # [DEMO] 종목 8개 상장
 docker compose exec api python -m app.cli create-admin admin # 관리자 생성 (비밀번호 입력)
+docker compose exec api python -m app.cli seed-demo --approve-by admin  # [DEMO] 종목 8개 (관리자 승인으로 상장)
 open http://localhost:3000
 ```
 
@@ -182,7 +210,8 @@ daily = clamp(raw, −8%, +8%)       next = max(100, round(base × (1 + daily)))
 4. `.env` 에 `YEX_YOUTUBE_API_KEY=...` 설정 후 재시작.
 5. 실제 채널 상장:
    ```bash
-   docker compose exec api python -m app.cli add-channel UCxxxxxxxxxxxxxxxxxxxxxx SYMBOL 10000 1000000 "표시 이름"
+   docker compose exec api python -m app.cli add-channel UCxxxxxxxxxxxxxxxxxxxxxx "표시 이름"   # 심사 대기로 등록 + 데이터 수집
+   docker compose exec api python -m app.cli approve <channel_id> SYMBOL 10000 1000000 --admin admin [--celebrity]
    ```
    또는 관리자 화면 → 상장 관리에서 등록 → (첫 수집 후) 승인. 첫 수집 전에는 거래 정지 상태로 상장됩니다.
 
