@@ -38,10 +38,10 @@ export function AutoOrderPanel({ asset }: { asset: Asset }) {
   return (
     <div className="space-y-3">
       <form onSubmit={create} className="space-y-2 text-sm">
-        <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
+        <div className="grid grid-cols-2 gap-1 rounded-full bg-panel2 p-1">
           {(["buy", "sell"] as const).map((s) => (
             <button type="button" key={s} onClick={() => setSide(s)} aria-pressed={side === s}
-              className={`rounded-md py-1.5 text-xs font-semibold ${side === s ? (s === "buy" ? "bg-up text-black" : "bg-down text-white") : "text-muted"}`}>
+              className={`rounded-full py-1.5 text-xs font-semibold ${side === s ? (s === "buy" ? "bg-up text-white" : "bg-down text-white") : "text-muted"}`}>
               {s === "buy" ? "▲ 자동 매수" : "▼ 자동 매도"}
             </button>
           ))}
@@ -53,7 +53,7 @@ export function AutoOrderPanel({ asset }: { asset: Asset }) {
         <div className="flex gap-2">
           {(["limit", "market"] as const).map((t) => (
             <button type="button" key={t} onClick={() => setOrderType(t)}
-              className={`flex-1 rounded border px-2 py-1 text-xs ${orderType === t ? "border-text" : "border-line text-muted"}`}>
+              className={`flex-1 rounded-full border px-2 py-1 text-xs ${orderType === t ? "border-text" : "border-line text-muted"}`}>
               {t === "limit" ? "지정가로 주문" : "시장가로 주문"}
             </button>
           ))}

@@ -73,17 +73,17 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
 
   return (
     <form onSubmit={submit} className="space-y-3" aria-label="주문 패널">
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-1">
+      <div className="grid grid-cols-2 gap-1 rounded-full bg-panel2 p-1">
         {(["buy", "sell"] as const).map((s) => (
           <button key={s} type="button" onClick={() => setSide(s)} aria-pressed={side === s}
-            className={`rounded-md py-2 text-sm font-semibold ${side === s ? (s === "buy" ? "bg-up text-white" : "bg-down text-white") : "text-muted"}`}>
+            className={`rounded-full py-2 text-sm font-semibold ${side === s ? (s === "buy" ? "bg-up text-white" : "bg-down text-white") : "text-muted"}`}>
             {s === "buy" ? "▲ 매수" : "▼ 매도"}
           </button>
         ))}
       </div>
       <div className="flex gap-2 text-sm">
         {(["limit", "market"] as const).map((t) => (
-          <label key={t} className={`flex-1 cursor-pointer rounded border px-3 py-1.5 text-center ${type === t ? "border-text text-text" : "border-line text-muted"}`}>
+          <label key={t} className={`flex-1 cursor-pointer rounded-full border px-3 py-1.5 text-center ${type === t ? "border-text text-text" : "border-line text-muted"}`}>
             <input type="radio" className="sr-only" name="otype" checked={type === t} onChange={() => setType(t)} />
             {t === "limit" ? "지정가" : "시장가"}
           </label>
@@ -109,7 +109,7 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
           </span>
         )}
       </label>
-      <div className="space-y-1 rounded-lg bg-panel2 p-3 text-xs text-muted">
+      <div className="space-y-1 rounded-xl bg-panel2 p-3 text-xs text-muted">
         <div className="flex justify-between"><span>{side === "buy" ? "주문 가능 현금" : "매도 가능 수량"}</span>
           <span className="font-mono text-text">{side === "buy" ? credits(availableCash) : credits(availableShares)}</span></div>
         {est && <>
@@ -124,13 +124,13 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
         <a href="/login" className="btn-primary block w-full text-center">로그인 후 거래</a>
       ) : (
         <button type="submit" disabled={!valid || pending || halted}
-          className={`w-full rounded-lg py-2.5 text-sm font-bold disabled:opacity-40 ${side === "buy" ? "bg-up text-white" : "bg-down text-white"}`}>
+          className={`w-full rounded-full py-3 text-base font-bold disabled:opacity-40 ${side === "buy" ? "bg-up text-white" : "bg-down text-white"}`}>
           {halted ? "⏸ 거래 정지 중" : pending ? "서버 처리 중…" : `${side === "buy" ? "매수" : "매도"} ${marketOpen ? "주문" : "예약"}`}
         </button>
       )}
-      {error && <div role="alert" className="rounded border border-red-500/50 bg-red-500/10 p-2 text-xs text-red-200">⚠ {error}</div>}
+      {error && <div role="alert" className="rounded-full border border-red-500/50 bg-red-500/10 p-2 text-xs text-red-200">⚠ {error}</div>}
       {result && (
-        <div role="status" className="rounded border border-line bg-panel2 p-2 text-xs">
+        <div role="status" className="rounded-full border border-line bg-panel2 p-2 text-xs">
           <div className="font-semibold text-text">
             {result.order.status === "rejected" ? "✕" : "✓"} 주문 #{result.order.id} · {orderStatusLabel(result.order.status)}
             {result.replayed && " (중복 요청 — 기존 주문 반환)"}

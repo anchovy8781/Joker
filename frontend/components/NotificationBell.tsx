@@ -37,7 +37,7 @@ export function NotificationBell() {
 
   return (
     <div className="relative" ref={ref}>
-      <button className="relative rounded-lg border border-line px-2.5 py-1.5 text-sm hover:bg-panel2"
+      <button className="relative rounded-full border border-line px-3 py-1.5 text-sm hover:bg-panel2"
         onClick={() => setOpen(!open)} aria-label={`알림 ${unread}개 읽지 않음`} aria-expanded={open}>
         🔔
         {unread > 0 && (

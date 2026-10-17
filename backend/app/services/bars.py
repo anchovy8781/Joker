@@ -20,13 +20,15 @@ _UPSERT = text(
 
 
 def bucket(ts: datetime, interval: str) -> datetime:
+    if interval == "1m":
+        return ts.replace(second=0, microsecond=0)
     if interval == "1h":
         return ts.replace(minute=0, second=0, microsecond=0)
     return ts.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def record_trade_bar(db: Session, asset_id: int, price: int, quantity: int, ts: datetime) -> None:
-    for interval in ("1h", "1d"):
+    for interval in ("1m", "1h", "1d"):
         db.execute(
             _UPSERT, {"a": asset_id, "i": interval, "t": bucket(ts, interval), "p": price, "v": quantity}
         )
@@ -35,3 +37,9 @@ def record_trade_bar(db: Session, asset_id: int, price: int, quantity: int, ts: 
 def record_reference_bar(db: Session, asset_id: int, price: int, ts: datetime) -> None:
     """Make sure a daily bar exists for the official price even when nothing traded."""
     db.execute(_UPSERT, {"a": asset_id, "i": "1d", "t": bucket(ts, "1d"), "p": price, "v": 0})
+
+
+def prune_minute_bars(db: Session, keep_days: int = 7) -> int:
+    """Minute bars are only for intraday charts; hourly/daily bars keep the long history."""
+    return db.execute(text("DELETE FROM market_bars WHERE interval = '1m' AND timestamp < now() - make_interval(days => :d)"),
+                      {"d": keep_days}).rowcount

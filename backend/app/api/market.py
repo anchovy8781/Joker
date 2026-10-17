@@ -1,6 +1,6 @@
 """Public market data: assets, history, order book, trades, leaderboard, status."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -92,15 +92,57 @@ def asset_live(asset_id: int, db: Session = Depends(get_db)):
     return live.snapshot(db, a, c)
 
 
+# Stored intervals are read directly; the others are rolled up from a finer stored one.
+_ROLLUPS = {
+    "5m": ("1m", "date_trunc('hour', timestamp) + floor(extract(minute from timestamp) / 5) * interval '5 minutes'"),
+    "15m": ("1m", "date_trunc('hour', timestamp) + floor(extract(minute from timestamp) / 15) * interval '15 minutes'"),
+    "1w": ("1d", "date_trunc('week', timestamp)"),
+    "1mo": ("1d", "date_trunc('month', timestamp)"),
+}
+
+
 @router.get("/assets/{asset_id}/history", response_model=list[BarOut])
-def history(asset_id: int, interval: Literal["1h", "1d"] = "1d",
+def history(asset_id: int, interval: Literal["1m", "5m", "15m", "1h", "1d", "1w", "1mo"] = "1d",
             limit: int = Query(default=90, ge=1, le=1000), db: Session = Depends(get_db)):
+    """OHLCV candles: 분봉(1m/5m/15m), 시간봉, 일봉, 주봉, 월봉."""
     _get_asset(db, asset_id)
+    if interval in _ROLLUPS:
+        base, bucket_sql = _ROLLUPS[interval]
+        rows = db.execute(text(
+            f"SELECT b AS timestamp, (array_agg(open_price ORDER BY timestamp))[1] AS open_price, "
+            f"max(high_price) AS high_price, min(low_price) AS low_price, "
+            f"(array_agg(close_price ORDER BY timestamp DESC))[1] AS close_price, sum(volume) AS volume "
+            f"FROM (SELECT *, {bucket_sql} AS b FROM market_bars WHERE asset_id = :a AND interval = :i) x "
+            f"GROUP BY b ORDER BY b DESC LIMIT :l"), {"a": asset_id, "i": base, "l": limit}).mappings().all()
+        return [BarOut(**{**r, "volume": int(r["volume"])}) for r in reversed(rows)]
     bars = db.execute(
         select(MarketBar).where(MarketBar.asset_id == asset_id, MarketBar.interval == interval)
         .order_by(MarketBar.timestamp.desc()).limit(limit)
     ).scalars().all()
     return list(reversed(bars))
+
+
+@router.get("/assets/{asset_id}/volume-profile")
+def volume_profile(asset_id: int, since: datetime | None = None, bins: int = Query(default=24, ge=4, le=60),
+                   db: Session = Depends(get_db)):
+    """매물대: traded volume per price band since `since` (default 30 days), split by aggressor side."""
+    a, _ = _get_asset(db, asset_id)
+    since = since or utcnow() - timedelta(days=30)
+    lo, hi = db.execute(select(func.min(Trade.execution_price), func.max(Trade.execution_price))
+                        .where(Trade.asset_id == asset_id, Trade.executed_at >= since)).one()
+    if lo is None:
+        return {"bins": [], "poc_price": None, "current_price": a.current_price, "total_volume": 0}
+    width = max(1, -(-(hi - lo + 1) // bins))
+    rows = db.execute(text(
+        "SELECT (execution_price - :lo) / :w AS k, sum(quantity) AS v, "
+        "sum(quantity) FILTER (WHERE taker_side = 'buy') AS bv FROM trades "
+        "WHERE asset_id = :a AND executed_at >= :s GROUP BY k ORDER BY k"),
+        {"lo": lo, "w": width, "a": asset_id, "s": since}).all()
+    out = [{"low": lo + int(k) * width, "high": lo + (int(k) + 1) * width - 1, "volume": int(v),
+            "buy_volume": int(bv or 0)} for k, v, bv in rows]
+    poc = max(out, key=lambda b: b["volume"])
+    return {"bins": out, "poc_price": (poc["low"] + poc["high"]) // 2, "current_price": a.current_price,
+            "total_volume": sum(b["volume"] for b in out)}
 
 
 @router.get("/assets/{asset_id}/trades", response_model=list[TradeOut])

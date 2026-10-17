@@ -43,7 +43,7 @@ export default function Missions() {
           🎁 받을 수 있는 보상 {claimableNow.length}개 · {credits(claimableNow.reduce((s, m) => s + m.reward, 0))} 모두 받기
         </button>
       )}
-      {msg && <div role="status" className="rounded-lg border border-line bg-panel2 px-3 py-2 text-sm">{msg}</div>}
+      {msg && <div role="status" className="rounded-xl border border-line bg-panel2 px-3 py-2 text-sm">{msg}</div>}
       {groups.map(([title, list]) => (
         <Card key={title} title={title}>
           {!data ? <Empty>불러오는 중…</Empty> : (

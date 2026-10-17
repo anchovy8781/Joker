@@ -46,15 +46,15 @@ export default function Listings() {
       <Card title="📝 상장 요청">
         {w && (
           w.limit_reached ? (
-            <div role="alert" className="mb-3 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">
+            <div role="alert" className="mb-3 rounded-xl border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-200">
               ⚠ 오늘의 상장 요청 최대한도({w.limit}개)에 도달했습니다. 내일 오후 7시에 다시 열립니다.
             </div>
           ) : !w.open ? (
-            <div className="mb-3 rounded-lg border border-line bg-panel2 p-3 text-sm">
+            <div className="mb-3 rounded-xl border border-line bg-panel2 p-3 text-sm">
               🕖 상장 요청은 매일 <b>오후 7시</b>부터 가능합니다. 다음 접수: {kstTime(w.next_opens_at)}
             </div>
           ) : (
-            <div className="mb-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
+            <div className="mb-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
               ● 접수 중 · 오늘 남은 요청 <b>{w.remaining}</b> / {w.limit}
             </div>
           )

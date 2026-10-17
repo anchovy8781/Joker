@@ -31,7 +31,7 @@ export default function AdminPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-1">
-        {TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} className={`rounded px-3 py-1.5 text-sm ${tab === k ? "bg-panel2 text-text" : "text-muted"}`}>{l}</button>)}
+        {TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 text-sm ${tab === k ? "bg-panel2 text-text" : "text-muted"}`}>{l}</button>)}
       </div>
       <p className="text-xs text-muted">모든 관리자 조치는 관리자 ID·사유·대상·시각과 함께 감사 로그에 기록됩니다. 거래·원장 기록은 수정/삭제할 수 없습니다.</p>
       {tab === "listing" && <Listing />}

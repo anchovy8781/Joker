@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import type { Freshness } from "@/lib/api";
 import { direction, pct, signed, timeAgo } from "@/lib/format";
 
-export function Card({ title, right, children, className = "" }: { title?: ReactNode; right?: ReactNode; children: ReactNode; className?: string }) {
+export function Card({ title, right, children, className = "", id }: { title?: ReactNode; right?: ReactNode; children: ReactNode; className?: string; id?: string }) {
   return (
-    <section className={`min-w-0 rounded-2xl bg-panel ${className}`}>
+    <section id={id} className={`min-w-0 rounded-2xl bg-panel ${className}`}>
       {(title || right) && (
         <header className="flex items-center justify-between gap-2 px-4 pb-1 pt-4">
           <h2 className="text-base font-bold text-text">{title}</h2>
@@ -45,11 +45,11 @@ export function PnL({ value }: { value: number | string }) {
 export function DemoBadge({ isDemo }: { isDemo: boolean }) {
   return isDemo ? (
     <span title="데모 데이터 공급자가 생성한 가상 지표입니다. 실제 유튜브 데이터가 아닙니다."
-      className="rounded border border-accent/60 bg-accent/10 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-accent">
+      className="rounded-full border border-accent/60 bg-accent/10 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-accent">
       DEMO 데이터
     </span>
   ) : (
-    <span title="YouTube Data API 공식 데이터" className="rounded border border-sky-500/60 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-sky-300">
+    <span title="YouTube Data API 공식 데이터" className="rounded-full border border-sky-500/60 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-sky-300">
       YouTube API
     </span>
   );
@@ -62,7 +62,7 @@ export function FreshnessBadge({ f }: { f: Freshness }) {
     never: { cls: "border-zinc-500/60 text-zinc-300", icon: "○", text: "수집 전" },
   }[f.status];
   return (
-    <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs ${map.cls}`}
+    <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs ${map.cls}`}
       title={`마지막 데이터 갱신: ${f.last_update_at ?? "없음"} (기준 ${f.stale_after_hours}시간)`}>
       <span aria-hidden>{map.icon}</span>
       {map.text} · {timeAgo(f.last_update_at)}
@@ -71,9 +71,9 @@ export function FreshnessBadge({ f }: { f: Freshness }) {
 }
 
 export function TradingBadge({ status, reason }: { status: string; reason?: string | null }) {
-  if (status === "active") return <span className="rounded border border-emerald-500/40 px-1.5 py-0.5 text-xs text-emerald-300">● 거래 가능</span>;
+  if (status === "active") return <span className="rounded-full border border-emerald-500/40 px-1.5 py-0.5 text-xs text-emerald-300">● 거래 가능</span>;
   return (
-    <span className="rounded border border-red-500/60 bg-red-500/10 px-1.5 py-0.5 text-xs text-red-300" title={reason ?? ""}>
+    <span className="rounded-full border border-red-500/60 bg-red-500/10 px-1.5 py-0.5 text-xs text-red-300" title={reason ?? ""}>
       ⏸ 거래 정지
     </span>
   );
@@ -92,7 +92,7 @@ export function Stat({ label, value, sub }: { label: string; value: ReactNode; s
 export function ErrorBox({ error }: { error: unknown }) {
   if (!error) return null;
   const msg = error instanceof Error ? error.message : String(error);
-  return <div role="alert" className="rounded-lg border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm text-red-200">⚠ {msg}</div>;
+  return <div role="alert" className="rounded-xl border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm text-red-200">⚠ {msg}</div>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {

@@ -8,7 +8,7 @@ import { OrderPanel } from "@/components/OrderPanel";
 import { AutoOrderPanel } from "@/components/AutoOrderPanel";
 import { ChatBox } from "@/components/ChatBox";
 import { useMarketHours } from "@/components/MarketHoursBadge";
-import { PriceChart } from "@/components/PriceChart";
+import { CandleChart, type VolumeProfile } from "@/components/CandleChart";
 import { ChannelAvatar } from "@/components/ChannelAvatar";
 import { LivePanel } from "@/components/LivePanel";
 import { PriceAlerts } from "@/components/PriceAlerts";
@@ -39,13 +39,28 @@ function growth(points: MetricPoint[], key: "subscriber_count" | "view_count", d
   return ((last[key]! - base[key]!) / base[key]!) * 100;
 }
 
+type ChartInterval = "1m" | "5m" | "15m" | "1h" | "1d" | "1w" | "1mo";
+const INTERVALS: { key: ChartInterval; label: string; limit: number; poll: number }[] = [
+  { key: "1m", label: "1분", limit: 90, poll: 5_000 },
+  { key: "5m", label: "5분", limit: 90, poll: 10_000 },
+  { key: "15m", label: "15분", limit: 90, poll: 15_000 },
+  { key: "1h", label: "시간", limit: 120, poll: 30_000 },
+  { key: "1d", label: "일", limit: 120, poll: 60_000 },
+  { key: "1w", label: "주", limit: 104, poll: 60_000 },
+  { key: "1mo", label: "월", limit: 60, poll: 60_000 },
+];
+
 export default function AssetPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
-  const [chartInterval, setChartInterval] = useState<"1d" | "1h">("1d");
+  const [chartInterval, setChartInterval] = useState<ChartInterval>("1d");
+  const [show, setShow] = useState({ ma: true, trend: true, profile: true });
   const [picked, setPicked] = useState<number | null>(null);
   const asset = useApi<Asset>(`/api/assets/${id}`, 5_000);
-  const bars = useApi<Bar[]>(`/api/assets/${id}/history?interval=${chartInterval}&limit=${chartInterval === "1d" ? 120 : 168}`, 15_000);
+  const iv = INTERVALS.find((x) => x.key === chartInterval)!;
+  const bars = useApi<Bar[]>(`/api/assets/${id}/history?interval=${chartInterval}&limit=${iv.limit}`, iv.poll);
+  const since = bars.data?.[0]?.timestamp;
+  const profile = useApi<VolumeProfile>(show.profile && since ? `/api/assets/${id}/volume-profile?bins=24&since=${encodeURIComponent(since)}` : null, 30_000);
   const book = useApi<OrderBook>(`/api/assets/${id}/orderbook`, 3_000);
   const trades = useApi<Trade[]>(`/api/assets/${id}/trades?limit=30`, 5_000);
   const metrics = useApi<MetricPoint[]>(`/api/assets/${id}/metrics?days=60`);
@@ -67,11 +82,7 @@ export default function AssetPage() {
   const refresh = () => { asset.reload(); book.reload(); trades.reload(); account.reload(); positions.reload(); orders.reload(); };
 
   return (
-    <div className="space-y-4 pb-16 lg:pb-0">
-      <div className="fixed inset-x-0 bottom-[calc(60px+env(safe-area-inset-bottom))] z-30 flex gap-2 px-4 pb-2 lg:hidden">
-        <a href="#order" onClick={() => { setPanel("order"); setSideReq({ side: "buy", n: Date.now() }); }} className="flex-1 rounded-2xl bg-up py-3 text-center font-bold text-white shadow-lg">매수</a>
-        <a href="#order" onClick={() => { setPanel("order"); setSideReq({ side: "sell", n: Date.now() }); }} className="flex-1 rounded-2xl bg-down py-3 text-center font-bold text-white shadow-lg">매도</a>
-      </div>
+    <div className="space-y-4">
       <div className="flex items-center gap-3">
         <ChannelAvatar src={a.channel.thumbnail_url} title={a.channel.title} seed={a.symbol} size={64} />
         <div className="min-w-0 flex-1">
@@ -90,6 +101,12 @@ export default function AssetPage() {
         <Change value={a.change} percent={a.change_pct} />
         <span className="text-xs text-muted">기준가 {credits(a.reference_price)} · 전일 {credits(a.previous_price)} · 인기도 {a.popularity_score ?? "—"}/50 {popularityLabel(a.popularity_score)}</span>
       </div>
+      <div className="flex gap-2 lg:hidden">
+        <a href="#order-card" onClick={() => { setPanel("order"); setSideReq({ side: "buy", n: Date.now() }); }}
+          className="flex-1 rounded-full bg-up py-3 text-center font-bold text-white">매수</a>
+        <a href="#order-card" onClick={() => { setPanel("order"); setSideReq({ side: "sell", n: Date.now() }); }}
+          className="flex-1 rounded-full bg-down py-3 text-center font-bold text-white">매도</a>
+      </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Metric label="시가총액" value={`${compact(a.market_cap)}`} />
         <Metric label="거래대금 (24h)" value={`${compact(a.turnover_24h)}`} />
@@ -97,18 +114,18 @@ export default function AssetPage() {
         <Metric label="인기도" value={a.popularity_score ? `${a.popularity_score} / 50` : "—"} />
       </div>
       {a.fee_surcharge_reason && (
-        <div className="rounded-lg border border-orange-500/50 bg-orange-500/10 px-4 py-2 text-sm text-orange-200">
+        <div className="rounded-xl border border-orange-500/50 bg-orange-500/10 px-4 py-2 text-sm text-orange-200">
           🔥 {a.fee_surcharge_reason === "new_video" ? "신규 영상 업로드" : "유명인 신규 채널"} 할증 수수료 {a.fee_bps / 100}% 적용 중
           {a.fee_surcharge_until && ` (${dateTime(a.fee_surcharge_until)}까지)`} · 손실 매도 시 매도 수수료 면제
         </div>
       )}
       {a.trading_status !== "active" && (
-        <div role="alert" className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+        <div role="alert" className="rounded-xl border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">
           ⏸ 거래 정지: {a.halt_reason?.replace(/^AUTO:/, "자동 정지 · ")}
         </div>
       )}
       {a.freshness.status !== "fresh" && (
-        <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
+        <div className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
           ⚠ 채널 데이터가 최신이 아닙니다 (마지막 갱신: {dateTime(a.freshness.last_update_at)}). 표시된 지표는 최신 값이 아닐 수 있습니다.
         </div>
       )}
@@ -116,13 +133,22 @@ export default function AssetPage() {
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="space-y-4">
           <LivePanel assetId={a.id} />
-          <Card title="가격 차트" right={
-            <div className="flex gap-1 text-xs">
-              {(["1d", "1h"] as const).map((iv) => (
-                <button key={iv} onClick={() => setChartInterval(iv)} className={`rounded px-2 py-1 ${chartInterval === iv ? "bg-panel2 text-text" : "text-muted"}`}>{iv === "1d" ? "일봉" : "시간봉"}</button>
+          <Card title="차트">
+            <div className="no-scrollbar -mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1" role="tablist" aria-label="차트 주기">
+              {INTERVALS.map((x) => (
+                <button key={x.key} role="tab" aria-selected={chartInterval === x.key} onClick={() => setChartInterval(x.key)}
+                  className={`chip px-3 py-1.5 text-xs ${chartInterval === x.key ? "chip-on" : ""}`}>{x.label}</button>
               ))}
-            </div>}>
-            <PriceChart bars={bars.data ?? []} />
+            </div>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {([["ma", "이동평균선"], ["trend", "추세선"], ["profile", "매물대"]] as const).map(([k, label]) => (
+                <button key={k} aria-pressed={show[k]} onClick={() => setShow({ ...show, [k]: !show[k] })}
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${show[k] ? "border-text text-text" : "border-line text-muted"}`}>
+                  {show[k] ? "✓ " : ""}{label}
+                </button>
+              ))}
+            </div>
+            <CandleChart bars={bars.data ?? []} interval={chartInterval} profile={show.profile ? profile.data : null} show={show} />
           </Card>
 
           <Card title="채널 공개 지표" right={<span className="text-xs text-muted">{a.is_demo ? "데모 공급자 생성값" : "YouTube Data API 공개 통계"}</span>}>
@@ -169,11 +195,11 @@ export default function AssetPage() {
         </div>
 
         <div className="space-y-4">
-          <Card className="scroll-mt-20" title={
+          <Card className="scroll-mt-20" id="order-card" title={
             <div id="order" className="flex gap-1">
-              <button onClick={() => setPanel("order")} className={`rounded px-2 py-0.5 ${panel === "order" ? "bg-panel2" : "text-muted"}`}>주문</button>
-              <button onClick={() => setPanel("auto")} className={`rounded px-2 py-0.5 ${panel === "auto" ? "bg-panel2" : "text-muted"}`}>자동 매매</button>
-              <button onClick={() => setPanel("alert")} className={`rounded px-2 py-0.5 ${panel === "alert" ? "bg-panel2" : "text-muted"}`}>🔔 알림</button>
+              <button onClick={() => setPanel("order")} className={`rounded-full px-2 py-0.5 ${panel === "order" ? "bg-panel2" : "text-muted"}`}>주문</button>
+              <button onClick={() => setPanel("auto")} className={`rounded-full px-2 py-0.5 ${panel === "auto" ? "bg-panel2" : "text-muted"}`}>자동 매매</button>
+              <button onClick={() => setPanel("alert")} className={`rounded-full px-2 py-0.5 ${panel === "alert" ? "bg-panel2" : "text-muted"}`}>🔔 알림</button>
             </div>}>
             {panel === "alert" ? (user ? <PriceAlerts assetId={a.id} current={a.current_price} /> : <p className="text-sm text-muted">로그인 후 이용하세요.</p>)
               : panel === "auto" ? (user ? <AutoOrderPanel asset={a} /> : <p className="text-sm text-muted">로그인 후 이용하세요.</p>) : <>
@@ -182,14 +208,15 @@ export default function AssetPage() {
               availableShares={pos ? pos.quantity - pos.reserved_quantity : user ? 0 : null}
               onDone={refresh} />
             {pos && pos.quantity > 0 && (
-              <div className="mt-3 rounded-lg bg-panel2 p-3 text-xs text-muted">
+              <div className="mt-3 rounded-xl bg-panel2 p-3 text-xs text-muted">
                 보유 {credits(pos.quantity)}주 · 평균 {credits(pos.average_cost)} · 평가 {credits(pos.market_value)}
               </div>
             )}
             </>}
           </Card>
+          <Card title="호가창"><OrderBookView book={book.data} onPick={(p) => { setPicked(p); setPanel("order"); document.getElementById("order")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+            currentPrice={a.current_price} previousPrice={a.previous_price} /></Card>
           <Card title={`💬 ${a.symbol} 종목방`}><ChatBox room={`asset:${a.id}`} height="h-64" /></Card>
-          <Card title="주문장"><OrderBookView book={book.data} onPick={setPicked} /></Card>
           <Card title="최근 체결">
             {!trades.data?.length ? <Empty>체결 없음</Empty> : (
               <table className="table text-xs">
@@ -235,7 +262,7 @@ function fmtGrowth(v: number | null) {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-panel2 p-3">
+    <div className="rounded-xl bg-panel2 p-3">
       <div className="text-xs text-muted">{label}</div>
       <div className="mt-1 font-mono text-base tabular-nums">{value}</div>
     </div>

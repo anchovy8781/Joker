@@ -65,6 +65,9 @@ def collect_live(db: Session, api: YouTubeDataAPIProvider | None, now: datetime 
         except ProviderError as exc:
             out["errors"].append(str(exc))
     db.execute(delete(ChannelSample).where(ChannelSample.observed_at < now - timedelta(days=s.live_samples_keep_days)))
+    from app.services.bars import prune_minute_bars
+
+    prune_minute_bars(db)
     db.flush()
     return out
 

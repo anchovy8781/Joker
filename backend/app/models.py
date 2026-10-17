@@ -310,7 +310,7 @@ class Trade(Base):
 class MarketBar(Base):
     __tablename__ = "market_bars"
     __table_args__ = (
-        CheckConstraint("interval IN ('1h','1d')", name="ck_bars_interval"),
+        CheckConstraint("interval IN ('1m','1h','1d')", name="ck_bars_interval"),
         CheckConstraint("low_price <= high_price", name="ck_bars_low_high"),
         CheckConstraint("volume >= 0", name="ck_bars_volume"),
     )

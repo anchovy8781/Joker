@@ -53,7 +53,7 @@ export default function Portfolio() {
       <ErrorBox error={account.error ?? msg} />
       <div className="flex flex-wrap gap-1">
         {([["positions", "보유 종목"], ["orders", "주문"], ["trades", "체결 내역"], ["ledger", "원장"], ["account", "계정·이의제기"]] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} className={`rounded px-3 py-1.5 text-sm ${tab === k ? "bg-panel2 text-text" : "text-muted"}`}>{l}</button>
+          <button key={k} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 text-sm ${tab === k ? "bg-panel2 text-text" : "text-muted"}`}>{l}</button>
         ))}
       </div>
 

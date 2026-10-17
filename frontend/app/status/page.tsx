@@ -40,18 +40,18 @@ export default function StatusPage() {
             <p className="text-sm">실제 데이터(YouTube API) 종목 <b>{data.data_sources.youtube_api}</b>개 · 데모 데이터 종목 <b>{data.data_sources.demo}</b>개</p>
           </Card>
           <Card title="백그라운드 작업">
-            <table className="table">
+            <div className="-mx-4 overflow-x-auto px-4"><table className="table">
               <thead><tr><th>작업</th><th>마지막 결과</th><th>완료 시각</th></tr></thead>
               <tbody>
                 {Object.entries(data.last_jobs).map(([k, j]) => (
                   <tr key={k}>
-                    <td>{JOB_LABEL[k] ?? k}</td>
+                    <td className="whitespace-normal">{JOB_LABEL[k] ?? k}</td>
                     <td>{!j ? "○ 실행 기록 없음" : j.status === "succeeded" ? "● 성공" : `✕ 실패 ${j.error ?? ""}`}</td>
                     <td className="text-muted">{j?.finished_at ? `${dateTime(j.finished_at)} (${timeAgo(j.finished_at)})` : "—"}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
             <p className="mt-2 text-xs text-muted">마지막 원장 대사: {data.last_reconciliation ? `${data.last_reconciliation.status === "ok" ? "● 일치" : "⚠ 불일치"} · ${dateTime(data.last_reconciliation.at)}` : "기록 없음"}</p>
           </Card>
           <p className="text-xs text-muted">{data.disclaimer} 거래 수수료 {data.fee_bps / 100}%. 서버 시각 {dateTime(data.server_time)}</p>

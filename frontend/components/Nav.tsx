@@ -44,7 +44,7 @@ export function Nav() {
           <div className="ml-2 hidden flex-1 items-center gap-1 lg:flex">
             {[...TABS, ...extra].map((l) => (
               <Link key={l.href} href={l.href}
-                className={`rounded px-2.5 py-1.5 text-sm ${active(l.href) ? "bg-panel2 text-text" : "text-muted hover:text-text"}`}>
+                className={`rounded-full px-2.5 py-1.5 text-sm ${active(l.href) ? "bg-panel2 text-text" : "text-muted hover:text-text"}`}>
                 {l.label}
               </Link>
             ))}
@@ -61,7 +61,7 @@ export function Nav() {
                 <Link href="/register" className="btn-primary">가입</Link>
               </>
             )}
-            <button className="rounded-lg border border-line px-2.5 py-1.5 text-sm lg:hidden" onClick={() => setMore(true)}
+            <button className="rounded-full border border-line px-3 py-1.5 text-sm lg:hidden" onClick={() => setMore(true)}
               aria-label="더보기 메뉴" aria-expanded={more}>☰</button>
           </div>
         </div>

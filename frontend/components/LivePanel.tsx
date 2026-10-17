@@ -43,7 +43,7 @@ function FairValue({ i }: { i: NonNullable<Live["intraday"]> }) {
       {parts.length > 0 && (
         <div className="mt-1.5 grid grid-cols-3 gap-1 text-center text-xs">
           {parts.map(([label, v]) => (
-            <div key={label} className="rounded-lg bg-bg/60 px-1 py-1">
+            <div key={label} className="rounded-xl bg-bg/60 px-1 py-1">
               <div className="text-muted">{label}</div>
               <div className={v > 0 ? "text-up" : v < 0 ? "text-down" : "text-muted"}>{bp(v)}</div>
             </div>
