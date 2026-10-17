@@ -19,7 +19,7 @@ from app.services import jobs
 
 router = APIRouter(prefix="/api/internal", tags=["internal"], include_in_schema=False)
 log = logging.getLogger("yex.tick")
-TICK_BUDGET_SECONDS = 40.0
+TICK_BUDGET_SECONDS = 20.0  # stop starting new jobs after this; leftovers run next tick
 
 
 @router.post("/tick")

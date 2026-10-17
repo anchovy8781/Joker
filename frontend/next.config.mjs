@@ -26,6 +26,8 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   output: "standalone",
+  // The /api proxy gives up after 30s by default and answers 500; allow slower backend work.
+  experimental: { proxyTimeout: 90_000 },
   // The browser only talks to this origin; /api is proxied to FastAPI so session
   // cookies stay first-party and CORS can stay closed.
   async rewrites() {
