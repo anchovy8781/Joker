@@ -155,3 +155,51 @@ def test_spoof_bid_is_placed_then_withdrawn_and_shakeout_dumps(db, asset, monkey
     sells = [o for o in bots.desk_orders(a, _r.Random(2), now + timedelta(seconds=1)) if o[0] == "whale"]
     assert sells and all(side == "sell" for _, side, _ in sells)
     assert reconciliation.reconcile(db).status == "ok"
+
+
+def test_bot_league_rewards_winners_and_desks_learn(make_user, db, asset):
+    import random as _r
+    from datetime import UTC, datetime
+
+    from app.models import LedgerEntry, MarketAsset, User
+    from app.services import bot_league, bots, reconciliation
+
+    users = bots.ensure_bots(db)
+    db.commit()
+    now = datetime.now(UTC)
+    assert bot_league.evaluate(db, users, now) == {"ranked": 0}  # first period: baseline only
+    # one desk makes money: give it shares, then the price rises
+    winner = next(u for u in users if u.username == "기관_연기금")
+    from tests.conftest import give_shares
+
+    give_shares(db, winner.id, asset, 1000)
+    a = db.get(MarketAsset, asset)
+    a.current_price = a.current_price * 2
+    db.commit()
+    conv_before = bot_league.conviction(winner.username)
+    out = bot_league.evaluate(db, users, now + timedelta(minutes=61))
+    db.commit()
+    # gifted shares count as profit here (not system funding), so the desk ranks first
+    assert out["top"][0]["name"] == winner.username and out["top"][0]["reward"] > 0
+    assert bot_league.conviction(winner.username) > conv_before
+    assert db.query(LedgerEntry).filter_by(reference_type="bot_reward", user_id=winner.id).count() == 1
+    # not due again yet
+    assert bot_league.evaluate(db, users, now + timedelta(minutes=70)) is None
+    # a desk's view is graded when it ends: value bets that paid become likelier
+    p0 = bot_league.probabilities("외국인_헤지펀드", "foreign")["value"]
+    for _ in range(30):
+        bot_league.credit("외국인_헤지펀드", "foreign", "value", 2.0)
+        bot_league.credit("외국인_헤지펀드", "foreign", "trend", -2.0)
+    assert bot_league.probabilities("외국인_헤지펀드", "foreign")["value"] > max(p0, 0.6)
+    bot_league.save(db)
+    db.commit()
+    table = make_user().get("/api/bots/league").json()
+    assert table["bots"] and any(r.get("strategy") for r in table["bots"])
+    row = next(r for r in table["bots"] if r["name"] == winner.username)
+    assert row["rewards"] > 0 and row["podiums"] == 1
+    # desks keep trading on the tape with their learned views; books still balance
+    for i in range(20):
+        bots.tape_tick(db, [asset], now=now + timedelta(minutes=80, seconds=4 * i), rng=_r.Random(i))
+    assert any(k[1] == "기관_연기금" or k[1].startswith("외국인") or k[1].startswith("기관") for k in bots._desks)
+    assert reconciliation.reconcile(db).status == "ok"
+    assert db.get(User, winner.id).role == "bot"

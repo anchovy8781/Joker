@@ -21,9 +21,11 @@ touch (they add depth). Bots never trade with themselves (self-trade prevention 
 """
 
 import logging
+import math
 import random
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -34,7 +36,7 @@ from app.config import get_settings
 from app.errors import AppError
 from app.models import Account, Channel, LedgerEntry, MarketAsset, MarketBar, Position, Trade, User
 from app.security import utcnow
-from app.services import intraday, market_hours
+from app.services import bot_league, intraday, market_hours
 from app.services.fees import bps_down, bps_up
 from app.services.ledger import lock_account, post_entry
 from app.services.listing import fund_market_maker, get_market_maker, requote_market_maker
@@ -455,36 +457,71 @@ def _maybe_requote(db: Session, asset: MarketAsset, now: datetime, traded: bool,
 
 _tape_cursor = 0
 _desks: dict[tuple[int, str], dict] = {}
+_hist: dict[int, deque] = {}  # recent (time, price) per asset, what a desk can see of the trend
+_whale_flow: dict[int, float] = {}  # decaying net 세력 buying per asset, in ladder-level units (수급)
 _shakeouts: dict[int, dict] = {}
 _spoofs: dict[int, dict] = {}
 
 
-def _desk_view(asset_id: int, kind: str, now: datetime) -> float:
-    """A desk's current view on one stock, -1 (selling) .. +1 (buying). 기관 views change
-    slowly (30-120 min), 외국인 faster (15-90 min) and lean with the market's trend."""
-    d = _desks.get((asset_id, kind))
-    if d is None or now >= d["end"]:
+def _trend(asset: MarketAsset, now: datetime) -> float:
+    """Observed return over the last ~15 minutes (from prices the tape has seen)."""
+    h = _hist.get(asset.id)
+    if not h:
+        return 0.0
+    start = next((p for t, p in h if now - t <= timedelta(minutes=15)), h[-1][1])
+    return (asset.current_price - start) / start if start else 0.0
+
+
+def _signal(asset: MarketAsset, strategy: str, now: datetime) -> float:
+    """What a strategy says about one stock, -1 (sell) .. +1 (buy), from public information only:
+    the recent trend, the gap to fair value, and the 세력 flow the 수급 table also shows."""
+    if strategy in ("trend", "contrarian"):
+        x = math.tanh(_trend(asset, now) * 60)
+        return x if strategy == "trend" else -x
+    if strategy == "value":
+        fair = max(1, intraday.fair_price(asset))
+        return math.tanh((fair - asset.current_price) / fair * 25)
+    return math.tanh(_whale_flow.get(asset.id, 0.0) * 0.4)
+
+
+def _desk_view(asset: MarketAsset, name: str, kind: str, now: datetime) -> float:
+    """A desk's current view on one stock, -1 (selling) .. +1 (buying). Each view follows one
+    strategy the desk picks by what has paid it before (봇 리그); when the view ends it is graded
+    by how the price moved and the desk learns from it. 기관 views last 30-120 min, 외국인 15-90."""
+    d = _desks.get((asset.id, name))
+    if d is not None and now >= d["end"]:
+        moved = (asset.current_price - d["price"]) / d["price"] * 100 if d["price"] else 0.0
+        bot_league.credit(name, kind, d["strategy"], moved * (1 if d["bias"] >= 0 else -1) * min(1.0, abs(d["bias"]) * 2))
+        d = None
+    if d is None:
         lo, hi = (30, 120) if kind == "institution" else (15, 90)
-        d = {"bias": max(-1.0, min(1.0, _sysrand.gauss(0, 0.55))), "end": now + timedelta(minutes=_sysrand.uniform(lo, hi))}
-        _desks[(asset_id, kind)] = d
-    bias = d["bias"]
-    if kind == "foreign":
-        m = _moods.get(asset_id)
-        if m is not None:
-            bias = 0.6 * bias + 0.4 * max(-1.0, min(1.0, m.get("drift", 0.0) * 4))
-    return bias
+        strategy = bot_league.pick(name, kind, _sysrand)
+        bias = 0.8 * _signal(asset, strategy, now) + _sysrand.gauss(0, 0.25)
+        d = {"bias": max(-1.0, min(1.0, bias)), "strategy": strategy, "price": max(1, asset.current_price),
+             "end": now + timedelta(minutes=_sysrand.uniform(lo, hi))}
+        _desks[(asset.id, name)] = d
+    return d["bias"]
 
 
-def desk_orders(asset: MarketAsset, rng: random.Random, now: datetime) -> list[tuple[str, str, float]]:
+def _pick(group: list[User], rng: random.Random) -> User:
+    """Order flow goes to bots in proportion to their conviction (봇 리그): winners trade more."""
+    return rng.choices(group, weights=[bot_league.conviction(b.username) for b in group])[0]
+
+
+def desk_orders(asset: MarketAsset, rng: random.Random, now: datetime,
+                crowd: dict[str, list[User]] | None = None) -> list[tuple]:
     """This tick's (kind, side, value) from 기관, 외국인 and 세력. Whales accumulate or
     distribute per their campaign, and sometimes 개미털기: a sudden dump that scares retail
     out (they panic-sell with it), after which the whale buys back cheaper."""
     level = get_settings().mm_level_value
-    out: list[tuple[str, str, float]] = []
+    out: list[tuple] = []
     for kind, p_act, mu in (("institution", 0.22, 0.3), ("foreign", 0.18, 0.5)):
         if rng.random() < p_act:
-            side = "buy" if rng.random() < 0.5 + 0.4 * _desk_view(asset.id, kind, now) else "sell"
-            out.append((kind, side, level * rng.lognormvariate(mu, 0.6)))
+            group = (crowd or {}).get(kind) or []
+            desk = _pick(group, rng) if group else None
+            name = desk.username if desk else kind
+            side = "buy" if rng.random() < 0.5 + 0.45 * _desk_view(asset, name, kind, now) else "sell"
+            out.append((kind, side, level * rng.lognormvariate(mu, 0.6) * bot_league.conviction(name), desk))
     phase, strength = whale_phase(asset.id, now)
     sh = _shakeouts.get(asset.id)
     if sh and now < sh["end"]:
@@ -546,19 +583,29 @@ def _tape_asset(db: Session, asset: MarketAsset, crowd: dict[str, list[User]], r
     orders = 0
     _spoof(db, asset, crowd.get("whale", []), now)
     price = max(1, asset.current_price)
+    h = _hist.setdefault(asset.id, deque(maxlen=400))
+    if not h or now - h[-1][0] >= timedelta(seconds=10):
+        h.append((now, price))
+    _whale_flow[asset.id] = _whale_flow.get(asset.id, 0.0) * 0.97
     flow = [("noise", side, value) for side, value in tape_orders(asset, intraday.fair_price(asset), rng, now)[:max_orders]]
-    flow += desk_orders(asset, rng, now)
-    for kind, side, value in flow:
+    flow += desk_orders(asset, rng, now, crowd)
+    for kind, side, value, *chosen in flow:
         group = crowd.get(kind) or []
         if not group:
             continue
-        # A sell comes from someone who actually holds shares, so selling pressure is real.
-        sellers = [b for b in group if held.get((b.id, asset.id), 0) > 0]
-        if side == "sell" and not sellers:
-            if kind == "whale":
-                continue  # nothing to dump yet
-            side = "buy"
-        bot = rng.choice(sellers) if side == "sell" else rng.choice(group)
+        desk = chosen[0] if chosen else None
+        if desk is not None:  # a desk acts on its own view: it sells only what it holds
+            if side == "sell" and held.get((desk.id, asset.id), 0) <= 0:
+                continue
+            bot = desk
+        else:
+            # A sell comes from someone who actually holds shares, so selling pressure is real.
+            sellers = [b for b in group if held.get((b.id, asset.id), 0) > 0]
+            if side == "sell" and not sellers:
+                if kind == "whale":
+                    continue  # nothing to dump yet
+                side = "buy"
+            bot = _pick(sellers, rng) if side == "sell" else _pick(group, rng)
         if side == "sell":
             qty = min(held[(bot.id, asset.id)], max(1, int(value // price)))
         else:
@@ -582,6 +629,8 @@ def _tape_asset(db: Session, asset: MarketAsset, crowd: dict[str, list[User]], r
         db.commit()
         if ok:
             orders += 1
+            if kind == "whale":
+                _whale_flow[asset.id] = _whale_flow.get(asset.id, 0.0) + (1 if side == "buy" else -1) * qty * price / get_settings().mm_level_value
             if side == "sell":
                 held[(bot.id, asset.id)] -= qty
             else:
@@ -692,7 +741,8 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
             if decision is None:
                 continue
             _refill(db, bot, p, now)
-            if _order(db, bot, asset, decision[0], decision[1], rng, p.kind):
+            # Conviction (봇 리그): bots that have been making money size up, losers size down.
+            if _order(db, bot, asset, decision[0], decision[1] * bot_league.conviction(bot.username), rng, p.kind):
                 orders += 1
                 touched.add(asset.id)
                 if commit_each:
@@ -702,7 +752,11 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
             db.commit()
     for asset in assets:
         _maybe_requote(db, asset, now, asset.id in touched, commit_each)
-    return {"assets": len(assets), "orders": orders, "touched": len(touched)}
+    league = bot_league.evaluate(db, bots, now)
+    bot_league.save(db)
+    if commit_each:
+        db.commit()
+    return {"assets": len(assets), "orders": orders, "touched": len(touched), "league": league}
 
 
 def whale_net_flow(db: Session, asset_id: int, since: datetime) -> dict:

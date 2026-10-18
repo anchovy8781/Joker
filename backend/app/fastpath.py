@@ -40,6 +40,7 @@ _SHARED = (
     ("/api/market/summary", 3.0),
     ("/api/market/hours", 10.0),
     ("/api/leaderboard", 10.0),
+    ("/api/bots/league", 15.0),
     ("/api/announcements", 15.0),
 )
 _cache: dict[str, tuple[float, int, bytes, str]] = {}

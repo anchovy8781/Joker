@@ -57,6 +57,9 @@ def clean_tables(migrated_db):
         # TRUNCATE is not covered by the row-level append-only triggers; tests only.
         conn.execute(text(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE"))
     eng.dispose()
+    from app.services import bot_league
+
+    bot_league.reset_for_tests()
     yield
     reset_engine()
 
