@@ -214,6 +214,9 @@ def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, 
         req = OrderRequest(asset.id, side, "limit", qty, limit, f"bot:{uuid.uuid4().hex}")
     else:
         req = OrderRequest(asset.id, side, "market", qty, None, f"bot:{uuid.uuid4().hex}")
+    from app import fastpath
+
+    fastpath.wait_for_players()  # people's orders first
     try:
         with db.begin_nested():
             r = place_order(db, bot, req)

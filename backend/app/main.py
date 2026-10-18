@@ -90,7 +90,14 @@ def create_app() -> FastAPI:
         if hit is not None:
             response = Response(content=hit[1], status_code=hit[0], media_type=hit[2])
         else:
-            response = await call_next(request)
+            player_order = request.method == "POST" and path.startswith("/api/orders")
+            if player_order:
+                fastpath.order_started()
+            try:
+                response = await call_next(request)
+            finally:
+                if player_order:
+                    fastpath.order_finished()
             if ttl and response.status_code == 200:
                 body = b"".join([chunk async for chunk in response.body_iterator])
                 fastpath.cache_put(key, ttl, 200, body, response.media_type or "application/json")

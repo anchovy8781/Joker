@@ -36,3 +36,14 @@ def test_watched_assets_are_tracked_from_requests():
     fastpath.mark_view("/api/assets")
     fastpath.mark_view("/api/account")
     assert fastpath.watched_assets() == [7]
+
+
+def test_bots_wait_for_player_orders_but_not_forever():
+    import time
+
+    fastpath.order_started()
+    t = time.monotonic(); fastpath.wait_for_players(0.2)
+    assert 0.15 <= time.monotonic() - t < 1.0
+    fastpath.order_finished()
+    t = time.monotonic(); fastpath.wait_for_players(2.0)
+    assert time.monotonic() - t < 0.1

@@ -94,3 +94,26 @@ def watched_assets(within_seconds: float = 60.0) -> list[int]:
     for k in [k for k, t in _views.items() if t < cutoff]:
         _views.pop(k, None)
     return sorted(_views, key=_views.get, reverse=True)
+
+
+# Player orders in flight. Bots wait for them before taking the market maker's locks, so a
+# person's order never queues behind a bot's.
+_orders_in_flight = 0
+
+
+def order_started() -> None:
+    global _orders_in_flight
+    with _lock:
+        _orders_in_flight += 1
+
+
+def order_finished() -> None:
+    global _orders_in_flight
+    with _lock:
+        _orders_in_flight = max(0, _orders_in_flight - 1)
+
+
+def wait_for_players(max_seconds: float = 3.0) -> None:
+    deadline = time.monotonic() + max_seconds
+    while _orders_in_flight and time.monotonic() < deadline:
+        time.sleep(0.05)

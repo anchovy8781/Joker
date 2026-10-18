@@ -41,13 +41,13 @@ function growth(points: MetricPoint[], key: "subscriber_count" | "view_count", d
 
 type ChartInterval = "1s" | "5s" | "10s" | "30s" | "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "1d" | "1w" | "1mo";
 const INTERVALS: { key: ChartInterval; label: string; group: string; limit: number; poll: number }[] = [
-  { key: "1s", label: "1초", group: "초", limit: 120, poll: 3_000 },
-  { key: "5s", label: "5초", group: "초", limit: 120, poll: 3_000 },
-  { key: "10s", label: "10초", group: "초", limit: 120, poll: 3_000 },
-  { key: "30s", label: "30초", group: "초", limit: 120, poll: 5_000 },
-  { key: "1m", label: "1분", group: "분", limit: 90, poll: 5_000 },
-  { key: "3m", label: "3분", group: "분", limit: 90, poll: 10_000 },
-  { key: "5m", label: "5분", group: "분", limit: 90, poll: 10_000 },
+  { key: "1s", label: "1초", group: "초", limit: 300, poll: 3_000 },
+  { key: "5s", label: "5초", group: "초", limit: 300, poll: 3_000 },
+  { key: "10s", label: "10초", group: "초", limit: 300, poll: 3_000 },
+  { key: "30s", label: "30초", group: "초", limit: 300, poll: 5_000 },
+  { key: "1m", label: "1분", group: "분", limit: 300, poll: 5_000 },
+  { key: "3m", label: "3분", group: "분", limit: 300, poll: 10_000 },
+  { key: "5m", label: "5분", group: "분", limit: 300, poll: 10_000 },
   { key: "15m", label: "15분", group: "분", limit: 90, poll: 15_000 },
   { key: "30m", label: "30분", group: "분", limit: 90, poll: 30_000 },
   { key: "1h", label: "시간", group: "시간", limit: 120, poll: 30_000 },
@@ -60,7 +60,7 @@ const GROUPS = ["초", "분", "시간", "일", "주", "월"] as const;
 export default function AssetPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
-  const [chartInterval, setChartInterval] = useState<ChartInterval>("1d");
+  const [chartInterval, setChartInterval] = useState<ChartInterval>("1m");
   const [show, setShow] = useState({ ma: true, trend: true, profile: true });
   const [picked, setPicked] = useState<number | null>(null);
   const asset = useApi<Asset>(`/api/assets/${id}`, 10_000);
