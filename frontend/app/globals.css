@@ -4,7 +4,13 @@
 
 :root { color-scheme: dark; }
 body { @apply bg-bg font-sans text-text antialiased; letter-spacing: -0.01em; }
-.font-mono, .tabular-nums { font-variant-numeric: tabular-nums; }
+@layer base {
+  /* Never let one long word or wide element drag the whole page sideways (phones / app). */
+  html, body { max-width: 100%; overflow-x: clip; }
+  main { min-width: 0; overflow-wrap: anywhere; }
+  .grid > * { min-width: 0; }
+}
+.font-mono, .tabular-nums { font-variant-numeric: tabular-nums; overflow-wrap: normal; white-space: nowrap; }
 
 @layer components {
   .btn-primary { @apply whitespace-nowrap rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#1b64da] active:scale-[0.98] disabled:opacity-40; }

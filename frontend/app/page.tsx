@@ -12,7 +12,7 @@ import { useApi } from "@/lib/hooks";
 
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <section className="rounded-3xl bg-panel p-5">
+    <section className="min-w-0 rounded-3xl bg-panel p-5">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-bold">{title}</h2>
         {right}
@@ -30,7 +30,7 @@ function MoverCard({ a }: { a: Asset }) {
       <div className="truncate font-mono text-sm text-muted">{a.symbol}</div>
       <Sparkline points={a.sparkline} width={160} height={44} className="my-2 w-full" />
       <div className="flex items-baseline justify-between gap-1">
-        <span className="font-bold tabular-nums">₩{credits(a.current_price)}</span>
+        <span className="min-w-0 truncate font-bold tabular-nums">₩{credits(a.current_price)}</span>
         <ChangeText percent={a.change_pct} className="text-sm" />
       </div>
     </Link>
@@ -53,7 +53,7 @@ export default function Home() {
   return (
     <div className="space-y-5">
       {notices.data && notices.data.length > 0 && (
-        <div className="rounded-2xl bg-sky-500/10 px-4 py-3 text-sm">📢 <b>{notices.data[0].title}</b> — {notices.data[0].body}</div>
+        <div className="rounded-2xl bg-sky-500/10 px-4 py-3 text-sm [overflow-wrap:anywhere]">📢 <b>{notices.data[0].title}</b> — {notices.data[0].body}</div>
       )}
 
       {user && a ? (
@@ -89,7 +89,7 @@ export default function Home() {
       </section>
 
       <h2 className="px-1 pt-2 text-xl font-bold">한눈에 보기</h2>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Section title="24시간 거래대금 TOP 3">
           {byTurnover.length === 0 ? <Empty>…</Empty> : (
             <ol className="space-y-4">
