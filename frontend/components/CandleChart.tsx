@@ -62,7 +62,7 @@ export function CandleChart({ bars: all, interval, profile, show }: {
   const [W, setW] = useState(800);
   useEffect(() => {
     const el = boxRef.current;
-    if (!el) return;
+    if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(([e]) => setW(Math.max(280, Math.round(e.contentRect.width))));
     ro.observe(el);
     return () => ro.disconnect();

@@ -29,7 +29,23 @@ describe("CandleChart", () => {
     const { container, getByText } = render(<CandleChart bars={bars} interval="1d" profile={profile} show={{ ma: true, trend: true, profile: true }} />);
     expect(container.querySelectorAll("rect").length).toBeGreaterThan(60); // bodies + volume + profile
     expect(getByText("MA5")).toBeInTheDocument();
-    expect(getByText(/▲ 상승/)).toBeInTheDocument();
+    expect(getByText(/추세/)).toHaveTextContent("▲");
     expect(getByText(/최대 매물대/)).toBeInTheDocument();
+  });
+
+  it("zooms in and out with the buttons", async () => {
+    const { CandleChart } = await import("@/components/CandleChart");
+    const { fireEvent } = await import("@testing-library/react");
+    const bars = Array.from({ length: 200 }, (_, i) => ({
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
+      open_price: 1000, high_price: 1010, low_price: 990, close_price: 1005, volume: 1,
+    }));
+    const { getByLabelText, getByText } = render(<CandleChart bars={bars} interval="1m" show={{ ma: false, trend: false, profile: false }} />);
+    expect(getByText(/60개 봉 표시/)).toBeInTheDocument();
+    fireEvent.click(getByLabelText("확대"));
+    expect(getByText(/40개 봉 표시/)).toBeInTheDocument();
+    fireEvent.click(getByLabelText("축소"));
+    fireEvent.click(getByLabelText("축소"));
+    expect(getByText(/90개 봉 표시/)).toBeInTheDocument();
   });
 });
