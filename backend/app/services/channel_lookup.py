@@ -4,6 +4,7 @@ YouTube channel ID, and suggest listing terms for an administrator."""
 import html
 import json
 import re
+import time
 from urllib.parse import quote, unquote
 
 import httpx
@@ -48,28 +49,50 @@ _PAGE_SUBS = [re.compile(r'"subscriberCountText":\{[^{}]*?"simpleText":"([^"]{1,
               re.compile(r'"content":"([0-9.,]+[KMB만천억]?\s*subscribers?)"')]
 # YouTube shows a cookie-consent interstitial to some regions without these.
 _CONSENT = {"CONSENT": "YES+cb", "SOCS": "CAI"}
+_HEADERS = {"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
+PAGE_BUDGET_SECONDS = 8.0
+PAGE_MAX_BYTES = 4_000_000
+_TRANSPORT: httpx.BaseTransport | None = None  # tests swap in httpx.MockTransport
+
+
+class _Slow(Exception):
+    pass
+
+
+def _get_page(url: str, params: dict | None = None) -> tuple[int, str]:
+    """GET a YouTube page with a hard wall-clock budget and size cap (httpx's timeout is per
+    read, so a slow trickle could otherwise hold a request — and the user — for minutes)."""
+    deadline = time.monotonic() + PAGE_BUDGET_SECONDS
+    with httpx.Client(timeout=httpx.Timeout(5.0, connect=3.0), follow_redirects=True, cookies=_CONSENT,
+                      headers=_HEADERS, transport=_TRANSPORT) as c:
+        with c.stream("GET", url, params=params) as r:
+            chunks, size = [], 0
+            for chunk in r.iter_bytes():
+                chunks.append(chunk)
+                size += len(chunk)
+                if size > PAGE_MAX_BYTES or time.monotonic() > deadline:
+                    raise _Slow()
+            return r.status_code, b"".join(chunks).decode(r.encoding or "utf-8", errors="replace")
 
 
 def fetch_public_page(path: str) -> dict | None:
     """Public channel page (no API key): channel ID, title, avatar, subscriber text."""
     try:
-        r = httpx.get(f"https://www.youtube.com/{quote(path, safe='@/')}", timeout=10, follow_redirects=True,
-                      cookies=_CONSENT,
-                      headers={"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
-                               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                                             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"})
-    except httpx.HTTPError:
-        raise AppError(503, "YOUTUBE_UNAVAILABLE", "YouTube에 연결할 수 없습니다. 잠시 후 다시 시도하세요")
-    if r.status_code == 404:
+        status, page = _get_page(f"https://www.youtube.com/{quote(path, safe='@/')}")
+    except (httpx.HTTPError, _Slow):
+        raise AppError(503, "YOUTUBE_UNAVAILABLE", "YouTube 응답이 늦어요. 잠시 후 다시 시도하세요")
+    if status == 404:
         return None
-    if r.status_code != 200:
+    if status != 200:
         raise AppError(503, "YOUTUBE_UNAVAILABLE", "YouTube에 연결할 수 없습니다. 잠시 후 다시 시도하세요")
-    cid = next((m.group(1) for rx in _PAGE_ID if (m := rx.search(r.text))), None)
+    cid = next((m.group(1) for rx in _PAGE_ID if (m := rx.search(page))), None)
     if cid is None:
         return None
-    t = _PAGE_TITLE.search(r.text)
-    img = _PAGE_IMAGE.search(r.text)
-    subs = next((m.group(1) for rx in _PAGE_SUBS if (m := rx.search(r.text))), None)
+    t = _PAGE_TITLE.search(page)
+    img = _PAGE_IMAGE.search(page)
+    subs = next((m.group(1) for rx in _PAGE_SUBS if (m := rx.search(page))), None)
     return {"id": cid, "title": html.unescape(t.group(1)) if t else None,
             "thumbnail_url": html.unescape(img.group(1)) if img else None, "subscriber_text": subs}
 
@@ -223,13 +246,10 @@ def search_channels(query: str, api: YouTubeDataAPIProvider | None, limit: int =
         return [{"youtube_channel_id": cid, "title": title or cid, "handle": value if kind == "handle" else None,
                  "thumbnail_url": None, "subscriber_text": None}]
     try:
-        r = httpx.get("https://www.youtube.com/results", params={"search_query": q, "sp": "EgIQAg=="},  # channels
-                      timeout=10, follow_redirects=True, cookies=_CONSENT,
-                      headers={"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
-                               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                                             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"})
-        found = parse_search_page(r.text, limit) if r.status_code == 200 else []
-    except httpx.HTTPError:
+        status, page = _get_page("https://www.youtube.com/results",
+                                 {"search_query": q, "sp": "EgIQAg=="})  # channels only
+        found = parse_search_page(page, limit) if status == 200 else []
+    except (httpx.HTTPError, _Slow):
         found = []
     if found or api is None:
         if not found and api is None:

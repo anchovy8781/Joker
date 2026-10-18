@@ -35,10 +35,10 @@ def test_search_by_name_fills_channel_ids(make_user, monkeypatch):
     page = _results_page((CID1, "침착맨", "/@chimchakman", "구독자 300만명"), (CID2, "침착맨 클립", "/@clip", "구독자 10만명"))
     seen = {}
 
-    def fake_get(url, params=None, **kw):
-        seen.update(params or {})
+    def fake_get(req):
+        seen.update(dict(req.url.params))
         return httpx.Response(200, text=page)
-    monkeypatch.setattr(channel_lookup.httpx, "get", fake_get)
+    monkeypatch.setattr(channel_lookup, "_TRANSPORT", httpx.MockTransport(fake_get))
     r = make_user().get("/api/channels/search", params={"q": "침착맨"})
     assert r.status_code == 200, r.text
     rows = r.json()
@@ -111,3 +111,22 @@ def test_investor_archetype_bots_follow_their_style(db, asset):
     assert bots._decide(goldman, rng, a, {**cheap}, held=0)[0] == "buy"  # arbitrage toward fair value
     # Long-term investors never turn a sell into a buy when they hold nothing.
     assert bots._order(db, db.get(User, bots.ensure_bots(db)[-3].id), a, "sell", 1_000_000, rng, "buffett") is False
+
+
+def test_slow_youtube_page_gives_up_instead_of_hanging(make_user, monkeypatch):
+    """A trickling response is cut at the wall-clock budget; search returns quickly."""
+    import time as _t
+
+    class Trickle(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(1000):
+                _t.sleep(0.01)
+                yield b"x" * 10
+
+    monkeypatch.setattr(channel_lookup, "PAGE_BUDGET_SECONDS", 0.2)
+    monkeypatch.setattr(channel_lookup, "_TRANSPORT",
+                        httpx.MockTransport(lambda req: httpx.Response(200, stream=Trickle())))
+    started = _t.monotonic()
+    r = make_user().get("/api/channels/search", params={"q": "느린 채널"})
+    assert r.status_code == 200 and r.json() == []
+    assert _t.monotonic() - started < 3

@@ -19,7 +19,7 @@ function readCookie(name: string): string | null {
   return m ? decodeURIComponent(m.slice(name.length + 1)) : null;
 }
 
-export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
   const method = init.method ?? (init.body !== undefined ? "POST" : "GET");
   const headers: Record<string, string> = { Accept: "application/json" };
   if (method !== "GET") {
@@ -28,13 +28,24 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     const csrf = readCookie("yex_csrf");
     if (csrf) headers["X-CSRF-Token"] = csrf;
   }
-  const res = await fetch(path, {
-    method,
-    headers,
-    credentials: "same-origin",
-    cache: "no-store",
-    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-  });
+  const ctrl = init.timeoutMs ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), init.timeoutMs) : null;
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      headers,
+      credentials: "same-origin",
+      cache: "no-store",
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      signal: ctrl?.signal,
+    });
+  } catch (err) {
+    if (ctrl?.signal.aborted) throw new ApiError(0, "TIMEOUT", "응답이 너무 늦어요. 잠시 후 다시 시도해 주세요", {});
+    throw err; // network failure: callers retry (e.g. orders reuse their idempotency key)
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (res.status === 204) return undefined as T;
   let data: any = null;
   try {
@@ -44,7 +55,7 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   }
   if (!res.ok) {
     const e = data?.error;
-    throw new ApiError(res.status, e?.code ?? "HTTP_ERROR", e?.message ?? `Request failed (${res.status})`, e?.details ?? {});
+    throw new ApiError(res.status, e?.code ?? "HTTP_ERROR", e?.message ?? (res.status >= 500 ? `서버가 잠시 응답하지 않아요 (${res.status}). 잠시 후 다시 시도해 주세요` : `요청에 실패했어요 (${res.status})`), e?.details ?? {});
   }
   return data as T;
 }

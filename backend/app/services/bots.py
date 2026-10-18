@@ -23,6 +23,7 @@ touch (they add depth). Bots never trade with themselves (self-trade prevention 
 import hashlib
 import logging
 import random
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -75,11 +76,17 @@ WHALE_WINDOW = timedelta(minutes=90)
 
 
 def ensure_bots(db: Session) -> list[User]:
-    """Create missing bot accounts and fund each one once with its starting capital."""
+    """Create missing bot accounts and fund each one once with its starting capital.
+    Two queries when everything already exists (this runs every round)."""
+    norms = [p.username.lower() for p in PERSONAS]
+    existing = {u.normalized_username: u for u in db.execute(
+        select(User).where(User.normalized_username.in_(norms))).scalars()}
+    funded = set(db.execute(select(LedgerEntry.user_id).where(
+        LedgerEntry.user_id.in_([u.id for u in existing.values()]),
+        LedgerEntry.reference_type == "bot_seed")).scalars()) if existing else set()
     users = []
-    for p in PERSONAS:
-        norm = p.username.lower()
-        u = db.execute(select(User).where(User.normalized_username == norm)).scalar_one_or_none()
+    for p, norm in zip(PERSONAS, norms):
+        u = existing.get(norm)
         if u is None:
             u = User(username=p.username, normalized_username=norm, role="bot", password_hash=None,
                      verification_status="verified")
@@ -87,13 +94,12 @@ def ensure_bots(db: Session) -> list[User]:
             db.flush()
             db.add(Account(user_id=u.id, cash_balance=0, reserved_cash=0))
             db.flush()
-        funded = db.execute(select(LedgerEntry.id).where(
-            LedgerEntry.user_id == u.id, LedgerEntry.reference_type == "bot_seed")).first()
-        if not funded:
+        if u.id not in funded:
             post_entry(db, lock_account(db, u.id), entry_type="system_funding", amount=p.capital,
                        transaction_id=uuid.uuid4(), reference_type="bot_seed", reference_id=u.id,
                        memo=f"Starting capital for virtual trader ({p.kind})")
             db.flush()  # the session does not autoflush: make the seed visible to the next check
+            funded.add(u.id)
         users.append(u)
     return users
 
@@ -255,6 +261,9 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
                                                               a.current_price * a.shares_outstanding),
                                         reverse=True)[:3]}
     rng.shuffle(assets)
+    # Each statement is a network round trip to the database; cap the round's wall time so a
+    # distant database never turns the simulator into a queue in front of player requests.
+    deadline = time.monotonic() + s.bot_round_budget_seconds
     orders = 0
     touched: set[int] = set()
     for asset in assets[:8]:
@@ -262,7 +271,7 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
                "whale": whale_phase(asset.id, now), "top_quality": top_quality,
                "yt_bps": (asset.intraday_detail or {}).get("yt_bps", 0)}
         for bot in rng.sample(bots, len(bots)):
-            if orders >= s.bot_max_orders_per_round:
+            if orders >= s.bot_max_orders_per_round or time.monotonic() > deadline:
                 break
             p = BY_NAME[bot.username]
             if rng.random() > p.activity:
@@ -276,6 +285,8 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
             if _order(db, bot, asset, decision[0], decision[1], rng, p.kind):
                 orders += 1
                 touched.add(asset.id)
+                if commit_each:
+                    db.commit()  # release the market maker's and the asset's row locks per order
                 db.refresh(asset)
         if commit_each:
             db.commit()

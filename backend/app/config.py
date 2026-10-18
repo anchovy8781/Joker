@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     bots_enabled: bool = True
     bot_interval_seconds: float = 6.0  # stretched automatically when rounds are slow
     bot_max_orders_per_round: int = 12
+    bot_round_budget_seconds: float = 4.0  # stop placing bot orders after this much wall time
 
     # Listing requests: open daily from this hour (KST) until midnight, global daily cap.
     listing_request_open_hour_kst: int = 19

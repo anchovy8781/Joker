@@ -43,13 +43,13 @@ def test_public_page_lookup_reads_channel_id(monkeypatch):
             f'<link rel="canonical" href="https://www.youtube.com/channel/{CID}"></html>')
     seen = {}
 
-    def fake_get(url, **kw):
-        seen["url"] = url
+    def fake_get(req):
+        seen["url"] = str(req.url)
         return httpx.Response(200, text=page)
-    monkeypatch.setattr(channel_lookup.httpx, "get", fake_get)
+    monkeypatch.setattr(channel_lookup, "_TRANSPORT", httpx.MockTransport(fake_get))
     assert channel_lookup.lookup_public_page("@침착맨") == (CID, "침착맨")
     assert seen["url"] == "https://www.youtube.com/@%EC%B9%A8%EC%B0%A9%EB%A7%A8"  # keep the @
-    monkeypatch.setattr(channel_lookup.httpx, "get", lambda url, **kw: httpx.Response(404))
+    monkeypatch.setattr(channel_lookup, "_TRANSPORT", httpx.MockTransport(lambda req: httpx.Response(404)))
     assert channel_lookup.lookup_public_page("@nobody") is None
 
 

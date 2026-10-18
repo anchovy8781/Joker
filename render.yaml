@@ -26,10 +26,10 @@ services:
         value: "1"
       - key: YEX_CORS_ORIGINS
         value: "[]"
-      - key: YEX_DB_POOL_SIZE
-        value: "3"
+      - key: YEX_DB_POOL_SIZE           # simulator holds 2, the minute tick 1; the rest serve players
+        value: "6"
       - key: YEX_DB_MAX_OVERFLOW
-        value: "2"
+        value: "4"
       - key: YEX_BOOTSTRAP_ADMIN_USERNAME   # first admin (created once at startup)
         sync: false
       - key: YEX_BOOTSTRAP_ADMIN_PASSWORD   # 10+ characters

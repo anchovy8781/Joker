@@ -24,10 +24,11 @@ export function ChannelPicker({ onPicked, placeholder = "채널 이름 또는 @�
     setErr(null);
     if (picked || v.length < 2) { setHits(null); return; }
     let alive = true;
+    setSearching(false);
     const t = setTimeout(async () => {
       setSearching(true);
       try {
-        const r = await api<Hit[]>(`/api/channels/search?q=${encodeURIComponent(v)}`);
+        const r = await api<Hit[]>(`/api/channels/search?q=${encodeURIComponent(v)}`, { timeoutMs: 25_000 });
         if (alive) setHits(r);
       } catch (e) {
         if (alive) { setHits([]); setErr(e instanceof ApiError ? e.message : "검색하지 못했어요"); }
@@ -42,7 +43,7 @@ export function ChannelPicker({ onPicked, placeholder = "채널 이름 또는 @�
     setLoadingPick(true);
     setErr(null);
     try {
-      const p = await api<ChannelPreviewData>(`/api/listing-requests/preview?channel=${encodeURIComponent(h.youtube_channel_id)}`);
+      const p = await api<ChannelPreviewData>(`/api/listing-requests/preview?channel=${encodeURIComponent(h.youtube_channel_id)}`, { timeoutMs: 30_000 });
       const full = { ...p, handle: p.handle ?? h.handle, thumbnail_url: p.thumbnail_url ?? h.thumbnail_url,
                      subscriber_text: p.subscriber_text ?? h.subscriber_text };
       setPicked(full);
@@ -80,6 +81,12 @@ export function ChannelPicker({ onPicked, placeholder = "채널 이름 또는 @�
       {(searching || loadingPick) && <p className="text-sm text-muted">🔎 {loadingPick ? "채널 정보를 불러오는 중…" : "찾는 중…"}</p>}
       {err && <p role="alert" className="text-sm text-amber-300">⚠ {err}</p>}
       {hits && hits.length === 0 && !searching && !err && <p className="text-sm text-muted">검색 결과가 없어요. 다른 이름이나 @핸들로 찾아보세요.</p>}
+      {hits && hits.length === 0 && !searching && !loadingPick && /^@?[\w.\-]{3,30}$/u.test(q.trim()) && (
+        <button type="button" className="btn-ghost w-full py-3"
+          onClick={() => pick({ youtube_channel_id: q.trim().startsWith("@") ? q.trim() : `@${q.trim()}`, title: q.trim(), handle: null, thumbnail_url: null, subscriber_text: null })}>
+          {q.trim().startsWith("@") ? q.trim() : `@${q.trim()}`} 핸들로 바로 확인하기
+        </button>
+      )}
       {hits && hits.length > 0 && (
         <ul className="overflow-hidden rounded-2xl bg-panel2" role="listbox" aria-label="검색 결과">
           {hits.map((h) => (
