@@ -1,0 +1,22 @@
+# Starts a Render deploy on every push, for when Render's own auto-deploy does not fire.
+# Setup: Render → service → Settings → Deploy Hook → copy the URL, then GitHub → repo
+# Settings → Secrets and variables → Actions → New secret RENDER_DEPLOY_HOOK_URL.
+name: Render deploy
+on:
+  push:
+    branches: [claude/youtube-exchange-mvp-sk0z1u]
+    paths-ignore: ["mobile/**", "docs/**", "**.md"]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the Render deploy hook
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::warning::RENDER_DEPLOY_HOOK_URL secret is not set; skipping"
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK"
