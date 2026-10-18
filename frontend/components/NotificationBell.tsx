@@ -13,7 +13,7 @@ const ICON: Record<string, string> = {
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
-  const count = useApi<{ unread: number }>("/api/notifications/unread-count", 10_000);
+  const count = useApi<{ unread: number }>("/api/notifications/unread-count", 30_000);
   const list = useApi<Notification[]>(open ? "/api/notifications?limit=30" : null);
   const ref = useRef<HTMLDivElement>(null);
 

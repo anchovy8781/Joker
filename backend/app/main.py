@@ -82,6 +82,7 @@ def create_app() -> FastAPI:
                     "code": "RATE_LIMITED", "message": "Too many requests. Please slow down and try again later.",
                     "details": {"retry_after_seconds": retry}, "request_id": request.state.request_id}})
         if path.startswith("/api/"):
+            fastpath.mark_view(path)
             await run_in_threadpool(_refresh_runtime_settings)
         ttl = fastpath.shared_ttl(path) if request.method == "GET" and s.env != "test" else None
         key = f"{path}?{request.url.query}"

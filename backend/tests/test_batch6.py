@@ -173,3 +173,19 @@ def test_admin_one_touch_listing_and_management(make_admin, make_user, db, monke
     assert res.status_code == 200 and res.json()["approved"] == 2
     pending = db.execute(text("SELECT count(*) FROM channels WHERE listing_status='pending'")).scalar_one()
     assert pending == 0
+
+
+def test_price_heartbeat_ticks_every_call(db, asset):
+    """tape_tick: a small retail order on the watched asset each call, so the price keeps moving."""
+    bots.ensure_bots(db)
+    db.commit()
+    rng = random.Random(3)
+    t0 = datetime.now(UTC)
+    prices, orders = [], 0
+    for i in range(10):
+        out = bots.tape_tick(db, [asset], now=t0 + timedelta(seconds=4 * i), rng=rng)
+        orders += out["orders"]
+        prices.append(_price(db, asset))
+    assert orders >= 9
+    assert len(set(prices)) > 2
+    assert reconciliation.reconcile(db).status == "ok"

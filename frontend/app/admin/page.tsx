@@ -157,6 +157,7 @@ type SettingRow = { key: string; label: string; help: string; kind: "bool" | "ch
 function fmtChoice(key: string, v: number): string {
   if (key === "fee_bps") return `${v / 100}%`;
   if (key === "bot_interval_seconds") return `${v}초`;
+  if (key === "bot_persona_interval_seconds") return v >= 60 ? `${v / 60}분` : `${v}초`;
   if (key === "listing_requests_per_day") return `${v}개`;
   return v === 0 ? "무료" : `₩${credits(v)}`;
 }
@@ -256,7 +257,7 @@ function AuditTab() {
 }
 
 function Jobs() {
-  const jobs = useApi<JobRow[]>("/api/admin/jobs", 5_000);
+  const jobs = useApi<JobRow[]>("/api/admin/jobs", 10_000);
   const pus = useApi<PU[]>("/api/admin/price-updates?limit=50");
   const { msg, run } = useAction();
   return (

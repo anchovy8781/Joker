@@ -75,7 +75,7 @@ export function ChatBox({ room, height = "h-[55vh]" }: { room: string; height?: 
     lastId.current = 0;
     setMessages([]);
     load();
-    const t = setInterval(() => { if (!document.hidden) load(); }, 3000);
+    const t = setInterval(() => { if (!document.hidden) load(); }, 5000);
     return () => clearInterval(t);
   }, [load]);
 

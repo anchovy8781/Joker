@@ -26,3 +26,13 @@ def test_shared_cache_expires():
     assert fastpath.cache_get("a") is None
     fastpath.cache_put("b", 5.0, 200, b"y", "application/json")
     assert fastpath.cache_get("b") == (200, b"y", "application/json")
+
+
+
+def test_watched_assets_are_tracked_from_requests():
+    fastpath.clear()
+    fastpath._views.clear()
+    fastpath.mark_view("/api/assets/7/live")
+    fastpath.mark_view("/api/assets")
+    fastpath.mark_view("/api/account")
+    assert fastpath.watched_assets() == [7]

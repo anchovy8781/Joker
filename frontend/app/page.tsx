@@ -39,8 +39,8 @@ function MoverCard({ a }: { a: Asset }) {
 
 export default function Home() {
   const { user } = useAuth();
-  const assets = useApi<Asset[]>("/api/assets", 10_000);
-  const account = useApi<Account>(user ? "/api/account" : null, 10_000);
+  const assets = useApi<Asset[]>("/api/assets", 15_000);
+  const account = useApi<Account>(user ? "/api/account" : null, 15_000);
   const notices = useApi<{ id: number; title: string; body: string; created_at: string }[]>("/api/announcements");
   const list = assets.data ?? [];
   const movers = [...list].filter((a) => a.change_pct > 0).sort((x, y) => y.change_pct - x.change_pct).slice(0, 5);

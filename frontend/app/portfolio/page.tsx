@@ -19,9 +19,9 @@ type RiskInfo = { risk_level: string; status: string; events: { id: number; even
 export default function Portfolio() {
   const { user, ready } = useAuth();
   const [tab, setTab] = useState<"positions" | "orders" | "trades" | "ledger" | "account">("positions");
-  const account = useApi<Account>(user ? "/api/account" : null, 10_000);
-  const positions = useApi<Position[]>(user ? "/api/account/positions" : null, 10_000);
-  const orders = useApi<Order[]>(user ? "/api/orders?limit=100" : null, 10_000);
+  const account = useApi<Account>(user ? "/api/account" : null, 15_000);
+  const positions = useApi<Position[]>(user ? "/api/account/positions" : null, 15_000);
+  const orders = useApi<Order[]>(user ? "/api/orders?limit=100" : null, 15_000);
   const trades = useApi<MyTrade[]>(user ? "/api/trades?limit=100" : null);
   const ledger = useApi<LedgerEntry[]>(user ? "/api/account/ledger?limit=200" : null);
   const risk = useApi<RiskInfo>(user ? "/api/account/risk" : null);

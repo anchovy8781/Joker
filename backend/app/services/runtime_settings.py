@@ -36,7 +36,8 @@ SPECS: list[Spec] = [
     Spec("listing_requests_per_day", "하루 상장 요청 한도", "전체 사용자 합계", "choice", (10, 25, 50, 100)),
     Spec("fee_bps", "기본 거래 수수료", "체결 금액 대비 (bp: 10 = 0.1%)", "choice", (0, 10, 20, 50)),
     Spec("signup_grant", "가입 지급 크레딧", "새로 가입하는 사용자에게 지급", "choice", (500_000, 1_000_000, 2_000_000, 5_000_000)),
-    Spec("bot_interval_seconds", "봇 거래 주기 (초)", "짧을수록 시세가 자주 움직여요 (서버 부하 증가)", "choice", (3.0, 6.0, 10.0, 20.0)),
+    Spec("bot_interval_seconds", "시세 움직임 주기 (초)", "작은 개미 주문으로 가격이 이 간격(±1초)마다 움직여요", "choice", (3.0, 4.0, 5.0, 10.0)),
+    Spec("bot_persona_interval_seconds", "큰손 봇 주기 (초)", "세력·버핏형·멍거형·골드만형 등이 판단하는 간격", "choice", (60.0, 300.0, 600.0, 1800.0)),
 ]
 BY_KEY = {s.key: s for s in SPECS}
 REFRESH_SECONDS = 5.0

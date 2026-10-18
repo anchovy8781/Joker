@@ -58,7 +58,7 @@ function FairValue({ i }: { i: NonNullable<Live["intraday"]> }) {
   );
 }
 
-const POLL_MS = 2_000;
+const POLL_MS = 3_000;
 const KEEP_POINTS = 180; // 6 minutes of 2-second points
 
 function Tile({ label, value, sub, hint }: { label: string; value: React.ReactNode; sub?: React.ReactNode; hint?: string }) {

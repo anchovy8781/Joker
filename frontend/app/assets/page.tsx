@@ -47,7 +47,7 @@ export default function AssetsPage() {
     return () => clearTimeout(t);
   }, [q]);
 
-  const all = useApi<Asset[]>("/api/assets", 10_000);
+  const all = useApi<Asset[]>("/api/assets", 15_000);
   const list = useMemo(() => {
     const term = debounced.trim().toLowerCase();
     const found = (all.data ?? []).filter((a) => !term || a.symbol.toLowerCase().includes(term)

@@ -185,7 +185,7 @@ def _decide(p: Persona, rng: random.Random, asset: MarketAsset, ctx: dict, held:
 
 # Long-term investors never flip a sell into a buy; the bank quotes passively more often.
 NO_FLIP = {"buffett", "munger"}
-PASSIVE_P = {"goldman": 0.6}
+PASSIVE_P = {"goldman": 0.6, "tape": 0.0}
 
 
 def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, rng: random.Random,
@@ -235,6 +235,68 @@ def _cancel_stale_bot_orders(db: Session, bot_ids: list[int], now: datetime) -> 
                 cancel_order(db, db.get(User, o.user_id), o.id)
         except AppError:
             pass
+
+
+def _maybe_requote(db: Session, asset: MarketAsset, now: datetime, traded: bool, commit: bool,
+                   steps: int = 1) -> None:
+    """Re-centre the market maker only where the price drifted a full ladder step away from
+    the last centre (or every few minutes) — requotes are the expensive part of a round."""
+    stale = asset.intraday_updated_at is None or now - asset.intraday_updated_at > timedelta(minutes=3)
+    last_centre = _centres.get(asset.id)
+    drifted = last_centre is None or abs(asset.current_price - last_centre) * 10_000 > steps * get_settings().mm_step_bps * last_centre
+    if stale or (traded and drifted):
+        _centres[asset.id] = asset.current_price
+        requote_market_maker(db, asset.id)
+        if commit:
+            db.commit()
+
+
+_tape_cursor = 0
+
+
+def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: random.Random | None = None) -> dict:
+    """The few-second heartbeat of the market: one small market order from a retail bot on
+    each asset someone is watching plus one more in rotation, so every price keeps ticking
+    even when the big personas are between their (minutes-apart) decisions. Direction leans
+    toward the intraday fair value, so the tape wanders without running away."""
+    global _tape_cursor
+    now = now or utcnow()
+    rng = rng or random.Random()
+    assets = db.execute(select(MarketAsset).join(Channel, Channel.id == MarketAsset.channel_id)
+                        .where(Channel.listing_status == "listed", MarketAsset.trading_status == "active")
+                        .order_by(MarketAsset.id)).scalars().all()
+    if not assets:
+        return {"orders": 0}
+    by_id = {a.id: a for a in assets}
+    pick = [by_id[i] for i in hot if i in by_id][:2]
+    # Watched assets every tick; the rest take turns (every third tick while someone watches),
+    # keeping a tick within a few seconds even with a distant database.
+    _tape_cursor += 1
+    if not pick or _tape_cursor % 3 == 0:
+        other = assets[(_tape_cursor // (3 if pick else 1)) % len(assets)]
+        if other not in pick:
+            pick.append(other)
+    names = [p.username.lower() for p in PERSONAS if p.kind == "noise"]
+    retail = db.execute(select(User).where(User.normalized_username.in_(names))).scalars().all()
+    if not retail:
+        return {"orders": 0}
+    orders = 0
+    for asset in pick:
+        bot = rng.choice(retail)
+        p = BY_NAME[bot.username]
+        price = max(1, asset.current_price)
+        lean = max(-0.2, min(0.2, (intraday.fair_price(asset) - price) / price * 20))
+        side = "buy" if rng.random() < 0.5 + lean else "sell"
+        value = get_settings().mm_level_value * rng.uniform(0.15, 1.3)
+        _refill(db, bot, p, now)
+        if _order(db, bot, asset, side, value, rng, "tape"):
+            orders += 1
+            db.commit()
+            db.refresh(asset)
+            # Ladder has mm_levels per side: re-centre only after a few steps of drift.
+            _maybe_requote(db, asset, now, True, True, steps=3)
+    db.commit()
+    return {"orders": orders, "assets": len(pick)}
 
 
 def run_round(db: Session, now: datetime | None = None, rng: random.Random | None = None,
@@ -290,18 +352,8 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
                 db.refresh(asset)
         if commit_each:
             db.commit()
-    # Re-centre the market maker only where the price drifted a full ladder step away from
-    # the last centre (or every few minutes) — requotes are the expensive part of a round.
-    step = s.mm_step_bps
     for asset in assets:
-        stale = asset.intraday_updated_at is None or now - asset.intraday_updated_at > timedelta(minutes=3)
-        last_centre = _centres.get(asset.id)
-        drifted = last_centre is None or abs(asset.current_price - last_centre) * 10_000 > step * last_centre
-        if stale or (asset.id in touched and drifted):
-            _centres[asset.id] = asset.current_price
-            requote_market_maker(db, asset.id)
-            if commit_each:
-                db.commit()
+        _maybe_requote(db, asset, now, asset.id in touched, commit_each)
     return {"assets": len(assets), "orders": orders, "touched": len(touched)}
 
 

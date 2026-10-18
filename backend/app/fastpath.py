@@ -75,3 +75,22 @@ def cache_put(key: str, ttl: float, status: int, body: bytes, media_type: str) -
 def clear() -> None:
     _cache.clear()
     _windows.clear()
+
+
+
+# Assets someone is looking at (asset pages poll their live panel): the price heartbeat
+# ticks these first.
+_views: dict[int, float] = {}
+
+
+def mark_view(path: str) -> None:
+    parts = path.split("/")  # ["", "api", "assets", "{id}", ...]
+    if len(parts) >= 4 and parts[2] == "assets" and parts[3].isdigit():
+        _views[int(parts[3])] = time.monotonic()
+
+
+def watched_assets(within_seconds: float = 60.0) -> list[int]:
+    cutoff = time.monotonic() - within_seconds
+    for k in [k for k, t in _views.items() if t < cutoff]:
+        _views.pop(k, None)
+    return sorted(_views, key=_views.get, reverse=True)

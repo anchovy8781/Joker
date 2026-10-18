@@ -41,8 +41,8 @@ function growth(points: MetricPoint[], key: "subscriber_count" | "view_count", d
 
 type ChartInterval = "1s" | "5s" | "10s" | "30s" | "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "1d" | "1w" | "1mo";
 const INTERVALS: { key: ChartInterval; label: string; group: string; limit: number; poll: number }[] = [
-  { key: "1s", label: "1초", group: "초", limit: 120, poll: 2_000 },
-  { key: "5s", label: "5초", group: "초", limit: 120, poll: 2_000 },
+  { key: "1s", label: "1초", group: "초", limit: 120, poll: 3_000 },
+  { key: "5s", label: "5초", group: "초", limit: 120, poll: 3_000 },
   { key: "10s", label: "10초", group: "초", limit: 120, poll: 3_000 },
   { key: "30s", label: "30초", group: "초", limit: 120, poll: 5_000 },
   { key: "1m", label: "1분", group: "분", limit: 90, poll: 5_000 },
@@ -63,22 +63,22 @@ export default function AssetPage() {
   const [chartInterval, setChartInterval] = useState<ChartInterval>("1d");
   const [show, setShow] = useState({ ma: true, trend: true, profile: true });
   const [picked, setPicked] = useState<number | null>(null);
-  const asset = useApi<Asset>(`/api/assets/${id}`, 5_000);
+  const asset = useApi<Asset>(`/api/assets/${id}`, 10_000);
   const iv = INTERVALS.find((x) => x.key === chartInterval)!;
   const bars = useApi<Bar[]>(`/api/assets/${id}/history?interval=${chartInterval}&limit=${iv.limit}`, iv.poll);
   const since = bars.data?.[0]?.timestamp;
   const profile = useApi<VolumeProfile>(show.profile && since ? `/api/assets/${id}/volume-profile?bins=24&since=${encodeURIComponent(since)}` : null, 30_000);
-  const book = useApi<OrderBook>(`/api/assets/${id}/orderbook`, 3_000);
-  const trades = useApi<Trade[]>(`/api/assets/${id}/trades?limit=30`, 5_000);
+  const book = useApi<OrderBook>(`/api/assets/${id}/orderbook`, 4_000);
+  const trades = useApi<Trade[]>(`/api/assets/${id}/trades?limit=30`, 8_000);
   const metrics = useApi<MetricPoint[]>(`/api/assets/${id}/metrics?days=60`);
   const events = useApi<Event[]>(`/api/assets/${id}/events`);
   const updates = useApi<PriceUpdate[]>(`/api/assets/${id}/price-updates`);
-  const account = useApi<Account>(user ? "/api/account" : null, 5_000);
+  const account = useApi<Account>(user ? "/api/account" : null, 10_000);
   const hours = useMarketHours();
   const [panel, setPanel] = useState<"order" | "auto" | "alert">("order");
   const [sideReq, setSideReq] = useState<{ side: "buy" | "sell"; n: number } | undefined>();
-  const positions = useApi<Position[]>(user ? "/api/account/positions" : null, 5_000);
-  const orders = useApi<Order[]>(user ? `/api/orders?asset_id=${id}&limit=20` : null, 5_000);
+  const positions = useApi<Position[]>(user ? "/api/account/positions" : null, 10_000);
+  const orders = useApi<Order[]>(user ? `/api/orders?asset_id=${id}&limit=20` : null, 10_000);
 
   const a = asset.data;
   if (asset.error) return <ErrorBox error={asset.error} />;

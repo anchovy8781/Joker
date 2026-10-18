@@ -77,7 +77,8 @@ class Settings(BaseSettings):
 
     # Virtual traders (세력·개미) that keep the market moving.
     bots_enabled: bool = True
-    bot_interval_seconds: float = 6.0  # stretched automatically when rounds are slow
+    bot_interval_seconds: float = 4.0  # price heartbeat (small retail orders) every ~3-5s
+    bot_persona_interval_seconds: float = 600.0  # whales / value investors / momentum decide every 10 min
     bot_max_orders_per_round: int = 12
     bot_round_budget_seconds: float = 4.0  # stop placing bot orders after this much wall time
 
