@@ -135,6 +135,9 @@ function Listing() {
                 className={`shrink-0 whitespace-nowrap rounded-full px-3 py-2 text-sm font-semibold ${c.asset.trading_status === "active" ? "bg-emerald-500/15 text-emerald-300" : "bg-red-500/15 text-red-300"}`}>
                 {c.asset.trading_status === "active" ? "● 거래 중" : "○ 정지"}
               </button>
+              <button className="shrink-0 rounded-full px-2 py-2 text-xs font-semibold text-muted hover:text-text" disabled={busy !== null}
+                title="채널 이름으로 읽기 쉬운 심볼을 만들어요 (예: 보따 → BOTTA)"
+                onClick={() => tap(c.id, `/api/admin/assets/${c.asset!.id}/symbol`, "심볼을 정리했어요", {})}>심볼 정리</button>
               {confirmDelist === c.id ? (
                 <span className="flex shrink-0 gap-1">
                   <button className="btn-danger px-3" disabled={busy !== null}

@@ -158,22 +158,55 @@ def _nice_price(raw: float) -> int:
     return int(round(p, -digits)) if digits > 0 else p
 
 
+_CHO = ["G", "KK", "N", "D", "TT", "R", "M", "B", "PP", "S", "SS", "", "J", "JJ", "CH", "K", "T", "P", "H"]
+_JUNG = ["A", "AE", "YA", "YAE", "EO", "E", "YEO", "YE", "O", "WA", "WAE", "OE", "YO", "U", "WO", "WE", "WI", "YU",
+         "EU", "UI", "I"]
+_JONG = ["", "K", "K", "K", "N", "N", "N", "T", "L", "K", "M", "L", "L", "L", "P", "L", "M", "P", "P", "T", "T", "NG",
+         "T", "T", "K", "T", "P", "T"]
+
+
+def romanize(text: str) -> str:
+    """Korean (Hangul syllables) to Latin letters, Revised Romanization style without the
+    finer sound-change rules: 침착맨 → CHIMCHAKMAEN, 보따 → BOTTA. Other letters and digits
+    pass through; everything else is dropped."""
+    out = []
+    for ch in text:
+        code = ord(ch) - 0xAC00
+        if 0 <= code < 11172:
+            out.append(_CHO[code // 588] + _JUNG[(code % 588) // 28] + _JONG[code % 28])
+        elif ch.isascii() and ch.isalnum():
+            out.append(ch.upper())
+    return "".join(out)
+
+
+def symbol_base(channel: Channel) -> str:
+    """Readable ticker stem: the handle's Latin letters, else the romanized title, else
+    derived from the channel id."""
+    base = re.sub(r"[^A-Z0-9]", "", (channel.handle or "").upper())
+    if len(base) < 2:
+        base = romanize(re.sub(r"^\[DEMO\]\s*", "", channel.title))
+    if len(base) < 2:
+        base = "YT" + re.sub(r"[^A-Z0-9]", "", channel.youtube_channel_id.upper())[-6:]
+    return base[:10]
+
+
+def unique_symbol(db: Session, base: str, exclude_asset_id: int | None = None) -> str:
+    symbol, n = base, 1
+    while True:
+        taken = db.execute(select(MarketAsset.id).where(MarketAsset.symbol == symbol)).scalar()
+        if taken is None or taken == exclude_asset_id:
+            return symbol
+        n += 1
+        symbol = f"{base[:12 - len(str(n))]}{n}"
+
+
 def suggest_listing(db: Session, channel: Channel) -> dict:
     """Default listing terms so an administrator can approve with one tap."""
     subs = db.execute(select(ChannelMetric.metric_value).where(
         ChannelMetric.channel_id == channel.id, ChannelMetric.metric_type == "subscriber_count",
     ).order_by(ChannelMetric.observed_at.desc()).limit(1)).scalar()
     price = _nice_price(subs / 100) if subs else 10_000
-    base = re.sub(r"[^A-Z0-9]", "", (channel.handle or "").upper())
-    if len(base) < 2:
-        base = re.sub(r"[^A-Z0-9]", "", channel.title.upper())
-    if len(base) < 2:
-        base = "YT" + re.sub(r"[^A-Z0-9]", "", channel.youtube_channel_id.upper())[-6:]
-    base = base[:10]
-    symbol, n = base, 1
-    while db.execute(select(MarketAsset.id).where(MarketAsset.symbol == symbol)).first():
-        n += 1
-        symbol = f"{base[:12 - len(str(n))]}{n}"
+    symbol = unique_symbol(db, symbol_base(channel))
     return {"symbol": symbol, "initial_price": price, "shares_outstanding": 1_000_000,
             "subscriber_count": subs}
 

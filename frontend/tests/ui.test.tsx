@@ -12,7 +12,7 @@ describe("status indicators", () => {
     const { rerender } = render(<DemoBadge isDemo />);
     expect(screen.getByText("DEMO 데이터")).toBeInTheDocument();
     rerender(<DemoBadge isDemo={false} />);
-    expect(screen.getByText("YouTube API")).toBeInTheDocument();
+    expect(screen.getByText("실제 데이터")).toBeInTheDocument();
   });
   it("stale data is flagged as stale", () => {
     render(<FreshnessBadge f={{ status: "stale", last_update_at: "2020-01-01T00:00:00Z", age_hours: 9999, stale_after_hours: 48 }} />);

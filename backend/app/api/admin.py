@@ -547,3 +547,36 @@ def users(q: str | None = Query(default=None, max_length=32), limit: int = Query
     return [{"id": u.id, "username": u.username, "role": u.role, "status": u.status, "cash": int(c),
              "holdings_value": int(h), "equity": int(c) + int(h), "created_at": u.created_at,
              "last_login_at": u.last_login_at} for u, c, h in rows]
+
+
+
+@router.post("/assets/{asset_id}/symbol")
+def rename_symbol(asset_id: int, request: Request, body: dict | None = None,
+                  admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Change a stock's ticker. Without a symbol, a readable one is made from the channel's
+    handle or (romanized) name — e.g. YTVZHOMW → BOTTA."""
+    import re as _re
+
+    from app.services.listing import SYMBOL_RE
+
+    def tx(s: Session):
+        a = s.get(MarketAsset, asset_id)
+        if a is None:
+            raise AppError(404, "ASSET_NOT_FOUND", "Asset not found")
+        wanted = _re.sub(r"[^A-Z0-9]", "", str((body or {}).get("symbol") or "").upper())
+        symbol = wanted or channel_lookup.unique_symbol(s, channel_lookup.symbol_base(s.get(Channel, a.channel_id)), a.id)
+        if not SYMBOL_RE.match(symbol):
+            raise AppError(422, "INVALID_SYMBOL", "심볼은 영문 대문자·숫자 2~12자예요")
+        taken = s.execute(select(MarketAsset.id).where(MarketAsset.symbol == symbol)).scalar()
+        if taken is not None and taken != a.id:
+            raise AppError(409, "SYMBOL_TAKEN", "이미 쓰이는 심볼이에요")
+        before, a.symbol = a.symbol, symbol
+        write_audit(s, "asset.rename_symbol", actor_id=admin.id, target_type="asset", target_id=a.id,
+                    request_id=_rid(request), metadata={"from": before, "to": symbol})
+        return a
+
+    a = run_in_transaction(db, tx)
+    from app import fastpath
+
+    fastpath.clear_responses()
+    return {"id": a.id, "symbol": a.symbol}

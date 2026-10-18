@@ -45,12 +45,12 @@ export function PnL({ value }: { value: number | string }) {
 export function DemoBadge({ isDemo }: { isDemo: boolean }) {
   return isDemo ? (
     <span title="데모 데이터 공급자가 생성한 가상 지표입니다. 실제 유튜브 데이터가 아닙니다."
-      className="rounded-full border border-accent/60 bg-accent/10 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-accent">
+      className="whitespace-nowrap rounded-full border border-accent/60 bg-accent/10 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-accent">
       DEMO 데이터
     </span>
   ) : (
-    <span title="YouTube Data API 공식 데이터" className="rounded-full border border-sky-500/60 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-sky-300">
-      YouTube API
+    <span title="YouTube Data API 공식 데이터" className="whitespace-nowrap rounded-full border border-sky-500/60 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-bold tracking-wide text-sky-300">
+      실제 데이터
     </span>
   );
 }

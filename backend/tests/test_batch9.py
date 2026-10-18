@@ -90,3 +90,17 @@ def test_resume_all_only_resumes_what_halt_all_stopped(make_admin, db, asset):
     db.expire_all()
     assert db.get(MarketAsset, asset).trading_status == "halted"
     assert admin.get("/api/admin/users", params={"limit": -1}).status_code == 422
+
+
+def test_korean_names_make_readable_symbols(make_admin, db, asset):
+    from app.services.channel_lookup import romanize
+
+    assert romanize("보따") == "BOTTA" and romanize("침착맨") == "CHIMCHAKMAEN" and romanize("우주하마") == "UJUHAMA"
+    ch = db.get(Channel, db.get(MarketAsset, asset).channel_id)
+    ch.title, ch.handle = "보따", "@보따"
+    db.commit()
+    admin = make_admin()
+    r = admin.post(f"/api/admin/assets/{asset}/symbol", json={})
+    assert r.status_code == 200 and r.json()["symbol"] == "BOTTA", r.text
+    assert admin.post(f"/api/admin/assets/{asset}/symbol", json={"symbol": "x"}).status_code == 422
+    assert admin.post(f"/api/admin/assets/{asset}/symbol", json={"symbol": "bodda2"}).json()["symbol"] == "BODDA2"
