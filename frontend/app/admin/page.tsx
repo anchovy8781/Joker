@@ -19,7 +19,7 @@ type Recon = { id: number; status: string; checked_accounts: number; mismatches:
 type PU = { id: number; symbol: string; effective_date: string; status: string; old_price: number; new_price: number; error: string | null };
 type Ticket = { id: number; status: string; reason?: string; message?: string; target_type?: string; target_id?: string | null; user_id?: number; created_at: string; resolution: string | null };
 
-const TABS = [["listing", "상장 관리"], ["settings", "⚙ 설정"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
+const TABS = [["listing", "상장 승인"], ["settings", "⚙ 설정"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
 
 export default function AdminPage() {
   const { user, ready } = useAuth();
@@ -33,8 +33,8 @@ export default function AdminPage() {
   if (user?.role !== "admin") return <Card><Empty>관리자 권한이 필요합니다.</Empty></Card>;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-1">
-        {TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} className={`rounded-full px-3 py-1.5 text-sm ${tab === k ? "bg-panel2 text-text" : "text-muted"}`}>{l}</button>)}
+      <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4">
+        {TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} className={`chip px-3 py-1.5 ${tab === k ? "chip-on" : ""}`}>{l}</button>)}
       </div>
       <p className="text-xs text-muted">모든 관리자 조치는 관리자 ID·사유·대상·시각과 함께 감사 로그에 기록됩니다. 거래·원장 기록은 수정/삭제할 수 없습니다.</p>
       {tab === "listing" && <Listing />}
@@ -66,78 +66,88 @@ function askReason(label: string): string | null {
 }
 
 function Listing() {
-  const { data, reload } = useApi<AdminChannel[]>("/api/admin/channels", 15_000);
-  const { msg, run } = useAction();
+  const { data, reload } = useApi<AdminChannel[]>("/api/admin/channels", 10_000);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [msg, setMsg] = useState<{ id: number; text: string } | null>(null);
   const [preview, setPreview] = useState<ChannelPreviewData | null>(null);
   const [pickKey, setPickKey] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [filter, setFilter] = useState<"pending" | "listed" | "all">("pending");
 
   const rows = data ?? [];
   const pending = rows.filter((c) => c.listing_status === "pending");
   const listed = rows.filter((c) => c.listing_status === "listed");
-  const shown = filter === "pending" ? pending : filter === "listed" ? listed : rows;
-  const tap = async (path: string, body?: unknown) => { setBusy(true); await run(path, body, reload); setBusy(false); };
+  const tap = async (id: number, path: string, done: string, body: unknown = {}) => {
+    setBusy(id);
+    setMsg(null);
+    try { await api(path, { method: "POST", body }); setMsg({ id, text: `✓ ${done}` }); reload(); }
+    catch (e) { setMsg({ id, text: `⚠ ${e instanceof ApiError ? e.message : "실패했어요. 다시 눌러 주세요"}` }); }
+    finally { setBusy(null); }
+  };
 
   return (
     <div className="space-y-4">
-      <Card title="⚡ 원터치 상장">
-        <p className="mb-2 text-sm text-muted">채널 이름으로 찾아 고르면 채널 ID가 자동으로 들어가고, 추천 가격으로 바로 상장돼요.</p>
-        <ChannelPicker key={pickKey} onPicked={setPreview} />
-        {preview && (
-          <button className="btn-primary mt-3 w-full py-3 text-base" disabled={busy || preview.listing_status === "listed"}
-            onClick={async () => { await tap("/api/admin/quick-list", { channel: preview.youtube_channel_id }); setPreview(null); setPickKey((k) => k + 1); }}>
-            {preview.listing_status === "listed" ? "이미 상장된 채널" : busy ? "상장 중…" : `'${preview.title}' 바로 상장`}
-          </button>
+      <section>
+        <h2 className="mb-2 text-lg font-bold">상장 요청 {pending.length > 0 && <span className="text-up">{pending.length}</span>}</h2>
+        {msg && <p role="status" className="mb-2 rounded-xl bg-panel2 px-3 py-2 text-sm">{msg.text}</p>}
+        {!data ? <Empty>불러오는 중…</Empty> : pending.length === 0 ? <Card><Empty>새 상장 요청이 없어요</Empty></Card> : (
+          <ul className="space-y-2">
+            {pending.map((c) => (
+              <li key={c.id} className="rounded-2xl bg-panel p-3">
+                <div className="flex items-center gap-3">
+                  <ChannelAvatar src={c.thumbnail_url} title={c.title} seed={c.youtube_channel_id} size={48} className="shrink-0 rounded-full" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-bold">{c.title}</div>
+                    <div className="truncate text-sm text-muted">{c.handle ?? c.youtube_channel_id}{c.requested_by && <> · {c.requested_by}</>}</div>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button className="btn-primary py-3 text-base" disabled={busy !== null}
+                    onClick={() => tap(c.id, `/api/admin/channels/${c.id}/approve`, `'${c.title}' 상장했어요`)}>
+                    {busy === c.id ? "처리 중…" : "승인"}
+                  </button>
+                  <button className="btn-danger py-3 text-base" disabled={busy !== null}
+                    onClick={() => tap(c.id, `/api/admin/channels/${c.id}/reject`, `'${c.title}' 거부했어요 (신청 비용 환불)`)}>
+                    거부
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
-      </Card>
-      {msg && <p role="status" className="text-sm">{msg}</p>}
+      </section>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {([["pending", `심사 대기 ${pending.length}`], ["listed", `상장 ${listed.length}`], ["all", "전체"]] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setFilter(k)} className={`chip px-3 py-1.5 text-sm ${filter === k ? "chip-on" : ""}`}>{l}</button>
-        ))}
-        {pending.length > 0 && (
-          <button className="btn-primary ml-auto px-4 py-2" disabled={busy}
-            onClick={() => tap("/api/admin/channels/approve-all")}>✓ 대기 {pending.length}개 모두 승인</button>
-        )}
-      </div>
-
-      {!data ? <Empty>불러오는 중…</Empty> : shown.length === 0 ? <Card><Empty>{filter === "pending" ? "심사 대기 중인 요청이 없어요" : "채널이 없어요"}</Empty></Card> : (
-        <ul className="space-y-2">
-          {shown.map((c) => (
-            <li key={c.id} className="flex flex-wrap items-center gap-3 rounded-2xl bg-panel p-3">
-              <ChannelAvatar src={c.thumbnail_url} title={c.title} seed={c.youtube_channel_id} size={48} className="rounded-full" />
+      <details className="rounded-2xl bg-panel p-3">
+        <summary className="cursor-pointer font-bold">상장된 종목 {listed.length}개 · 거래 켜기/끄기</summary>
+        <ul className="mt-2 divide-y divide-line">
+          {listed.map((c) => c.asset && (
+            <li key={c.id} className="flex items-center gap-3 py-2">
+              <ChannelAvatar src={c.thumbnail_url} title={c.title} seed={c.youtube_channel_id} size={36} className="shrink-0 rounded-full" />
               <div className="min-w-0 flex-1">
-                <div className="truncate font-bold">{c.title}</div>
-                <div className="truncate text-sm text-muted">
-                  {c.asset ? <span className="font-mono">{c.asset.symbol} · ₩{credits(c.asset.current_price ?? c.asset.reference_price)}</span> : (c.handle ?? c.youtube_channel_id)}
-                  {c.requested_by && <> · 요청 {c.requested_by}</>}
-                </div>
-                {c.request_note && <div className="truncate text-xs text-muted">“{c.request_note}”</div>}
+                <div className="truncate text-sm font-bold">{c.title}</div>
+                <div className="truncate font-mono text-xs text-muted">{c.asset.symbol} · ₩{credits(c.asset.current_price ?? c.asset.reference_price)}</div>
               </div>
-              {c.listing_status === "pending" && (
-                <div className="flex gap-2">
-                  <button className="btn-primary px-4 py-2" disabled={busy} onClick={() => tap(`/api/admin/channels/${c.id}/approve`)}>승인</button>
-                  <button className="btn-danger px-4 py-2" disabled={busy} onClick={() => tap(`/api/admin/channels/${c.id}/reject`)}>거절</button>
-                </div>
-              )}
-              {c.asset && (
-                <button role="switch" aria-checked={c.asset.trading_status === "active"} disabled={busy}
-                  onClick={() => tap(`/api/admin/assets/${c.asset!.id}/${c.asset!.trading_status === "active" ? "halt" : "resume"}`)}
-                  className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold ${c.asset.trading_status === "active" ? "bg-emerald-500/15 text-emerald-300" : "bg-red-500/15 text-red-300"}`}>
-                  <span className={`relative inline-block h-5 w-9 rounded-full ${c.asset.trading_status === "active" ? "bg-emerald-500" : "bg-zinc-600"}`}>
-                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${c.asset.trading_status === "active" ? "left-[18px]" : "left-0.5"}`} />
-                  </span>
-                  {c.asset.trading_status === "active" ? "거래 중" : "정지"}
-                </button>
-              )}
-              {c.listing_status === "rejected" && <span className="text-sm text-muted">거절됨</span>}
+              <button role="switch" aria-checked={c.asset.trading_status === "active"} disabled={busy !== null}
+                onClick={() => tap(c.id, `/api/admin/assets/${c.asset!.id}/${c.asset!.trading_status === "active" ? "halt" : "resume"}`,
+                  c.asset!.trading_status === "active" ? `${c.asset!.symbol} 거래 정지` : `${c.asset!.symbol} 거래 재개`)}
+                className={`shrink-0 whitespace-nowrap rounded-full px-3 py-2 text-sm font-semibold ${c.asset.trading_status === "active" ? "bg-emerald-500/15 text-emerald-300" : "bg-red-500/15 text-red-300"}`}>
+                {c.asset.trading_status === "active" ? "● 거래 중" : "○ 정지"}
+              </button>
             </li>
           ))}
         </ul>
-      )}
-      <p className="text-xs text-muted">승인은 구독자 수 기준 추천가(심볼·가격·주식 수 자동)로 바로 상장돼요. 거절하면 신청 비용이 환불돼요. 모든 조치는 감사 로그에 남아요.</p>
+      </details>
+
+      <details className="rounded-2xl bg-panel p-3">
+        <summary className="cursor-pointer font-bold">채널 직접 상장하기</summary>
+        <div className="mt-3">
+          <ChannelPicker key={pickKey} onPicked={setPreview} />
+          {preview && (
+            <button className="btn-primary mt-3 w-full py-3 text-base" disabled={busy !== null || preview.listing_status === "listed"}
+              onClick={async () => { await tap(-1, "/api/admin/quick-list", `'${preview.title}' 상장했어요`, { channel: preview.youtube_channel_id }); setPreview(null); setPickKey((k) => k + 1); }}>
+              {preview.listing_status === "listed" ? "이미 상장된 채널" : `'${preview.title}' 상장`}
+            </button>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

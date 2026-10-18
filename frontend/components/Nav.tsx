@@ -34,13 +34,13 @@ export function Nav() {
   return (
     <>
       <nav className="sticky top-0 z-20 border-b border-line bg-bg/95 pt-[env(safe-area-inset-top)] backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center gap-2 px-4 py-2.5">
+        <div className="mx-auto flex max-w-7xl items-center gap-2 px-3 py-2 sm:px-4">
           <Link href="/" className="flex shrink-0 items-center gap-1.5 font-bold text-text">
             <span className="rounded bg-red-600 px-1.5 py-0.5 text-xs text-white" aria-hidden>▶</span>
             <span className="hidden sm:inline">YouTube Exchange</span>
             <span className="sm:hidden">YTX</span>
           </Link>
-          <MarketHoursBadge />
+          <span className="hidden sm:inline-flex"><MarketHoursBadge /></span>
           <div className="ml-2 hidden flex-1 items-center gap-1 lg:flex">
             {[...TABS, ...extra].map((l) => (
               <Link key={l.href} href={l.href}
@@ -49,7 +49,7 @@ export function Nav() {
               </Link>
             ))}
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {user ? (
               <>
                 <NotificationBell />
@@ -57,11 +57,11 @@ export function Nav() {
               </>
             ) : (
               <>
-                <Link href="/login" className="btn-ghost">로그인</Link>
-                <Link href="/register" className="btn-primary">가입</Link>
+                <Link href="/login" className="btn-ghost px-3">로그인</Link>
+                <Link href="/register" className="btn-primary px-3">가입</Link>
               </>
             )}
-            <button className="rounded-full border border-line px-3 py-1.5 text-sm lg:hidden" onClick={() => setMore(true)}
+            <button className="shrink-0 rounded-full border border-line px-3 py-1.5 text-sm lg:hidden" onClick={() => setMore(true)}
               aria-label="더보기 메뉴" aria-expanded={more}>☰</button>
           </div>
         </div>

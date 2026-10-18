@@ -36,8 +36,8 @@ export function NotificationBell() {
   };
 
   return (
-    <div className="relative" ref={ref}>
-      <button className="relative rounded-full border border-line px-3 py-1.5 text-sm hover:bg-panel2"
+    <div className="sm:relative" ref={ref}>
+      <button className="relative shrink-0 rounded-full border border-line px-3 py-1.5 text-sm hover:bg-panel2"
         onClick={() => setOpen(!open)} aria-label={`알림 ${unread}개 읽지 않음`} aria-expanded={open}>
         🔔
         {unread > 0 && (
@@ -47,7 +47,7 @@ export function NotificationBell() {
         )}
       </button>
       {open && (
-        <div role="dialog" aria-label="알림" className="absolute right-0 z-30 mt-2 w-[min(92vw,360px)] rounded-xl border border-line bg-panel shadow-2xl">
+        <div role="dialog" aria-label="알림" className="absolute inset-x-2 top-full z-30 mt-1 rounded-xl border border-line bg-panel shadow-2xl sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[360px]">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
             <span className="text-sm font-semibold">알림</span>
             <button className="text-xs text-muted hover:text-text" onClick={markAll} disabled={unread === 0}>모두 읽음</button>
