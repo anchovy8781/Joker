@@ -5,7 +5,7 @@ name: Render deploy
 on:
   push:
     branches: [claude/youtube-exchange-mvp-sk0z1u]
-    paths-ignore: ["mobile/**", "docs/**", "**.md"]
+    paths-ignore: ["mobile/**", "docs/**", "**.md", ".github/**", "**/tests/**"]
   workflow_dispatch:
 jobs:
   deploy:

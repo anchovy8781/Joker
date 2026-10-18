@@ -30,8 +30,9 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
       return await request<T>(path, init);
     } catch (e) {
       const transient = e instanceof ApiError ? [502, 503, 504].includes(e.status) : !(e instanceof ApiError);
-      if (!transient || attempt >= 2) throw e;
-      await sleep(700 * (attempt + 1));
+      // A deploy swaps the server in ~10-30s: keep trying a little longer before giving up.
+      if (!transient || attempt >= 4) throw e;
+      await sleep(Math.min(8000, 1000 * 2 ** attempt));
     }
   }
 }
@@ -72,7 +73,7 @@ async function request<T>(path: string, init: { method?: string; body?: unknown;
   }
   if (!res.ok) {
     const e = data?.error;
-    throw new ApiError(res.status, e?.code ?? "HTTP_ERROR", e?.message ?? (res.status >= 500 ? `서버가 잠시 응답하지 않아요 (${res.status}). 잠시 후 다시 시도해 주세요` : `요청에 실패했어요 (${res.status})`), e?.details ?? {});
+    throw new ApiError(res.status, e?.code ?? "HTTP_ERROR", e?.message ?? (res.status >= 500 ? `서버가 업데이트 중이거나 잠시 바빠요 (${res.status}). 곧 다시 연결돼요` : `요청에 실패했어요 (${res.status})`), e?.details ?? {});
   }
   return data as T;
 }

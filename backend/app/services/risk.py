@@ -159,15 +159,20 @@ def scan(db: Session, now: datetime | None = None) -> dict:
 
     # 3) Volume spikes and trade concentration per asset
     week_ago = now - timedelta(days=7)
+    # Only trades a person took part in: virtual traders and the market maker trading with
+    # each other are the simulated market, not something to investigate.
+    sys_ids = list(_system_ids(db)) or [-1]
+    human = ~(Trade.buyer_id.in_(sys_ids) & Trade.seller_id.in_(sys_ids))
     for asset_id, vol_1h in db.execute(
-        select(Trade.asset_id, func.sum(Trade.quantity)).where(Trade.executed_at >= since)
+        select(Trade.asset_id, func.sum(Trade.quantity)).where(Trade.executed_at >= since, human)
         .group_by(Trade.asset_id)
     ).all():
-        vol_7d = db.execute(
+        vol_1h = int(vol_1h)
+        vol_7d = int(db.execute(
             select(func.coalesce(func.sum(Trade.quantity), 0)).where(
-                Trade.asset_id == asset_id, Trade.executed_at >= week_ago, Trade.executed_at < since)
-        ).scalar_one()
-        avg_hourly = vol_7d / (7 * 24)
+                Trade.asset_id == asset_id, Trade.executed_at >= week_ago, Trade.executed_at < since, human)
+        ).scalar_one())
+        avg_hourly = round(vol_7d / (7 * 24), 2)  # plain float: stored as JSON evidence
         if vol_1h >= 100 and vol_1h > VOLUME_SPIKE_FACTOR * max(avg_hourly, 1):
             if add_event(db, user_id=None, asset_id=asset_id, event_type="volume_spike", severity="low",
                          reason=f"1h volume {vol_1h} vs 7d hourly average {avg_hourly:.1f}",
@@ -178,13 +183,13 @@ def scan(db: Session, now: datetime | None = None) -> dict:
             per_user: dict[int, int] = {}
             for b, s_, q in db.execute(
                 select(Trade.buyer_id, Trade.seller_id, Trade.quantity)
-                .where(Trade.asset_id == asset_id, Trade.executed_at >= since)
+                .where(Trade.asset_id == asset_id, Trade.executed_at >= since, human)
             ).all():
                 for u in (b, s_):
                     if u not in system:
                         per_user[u] = per_user.get(u, 0) + q
             for uid, q in per_user.items():
-                share = q / vol_1h
+                share = round(q / vol_1h, 4)
                 if share >= 0.7:
                     if add_event(db, user_id=uid, asset_id=asset_id, event_type="trade_concentration",
                                  severity="medium",

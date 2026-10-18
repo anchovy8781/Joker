@@ -87,7 +87,9 @@ export function useApi<T>(path: string | null, pollMs?: number) {
         setError(null);
       }
     } catch (e) {
-      if (alive.current) setError(e);
+      // A failed refresh while we still have data (e.g. during a deploy) is not worth an
+      // error banner: keep showing the last data; the next poll catches up.
+      if (alive.current && !cache.has(path)) setError(e);
     } finally {
       if (alive.current) setLoading(false);
     }
