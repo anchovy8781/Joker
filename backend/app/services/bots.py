@@ -20,7 +20,6 @@ Orders are mostly market orders (they move the price) plus some limit orders nea
 touch (they add depth). Bots never trade with themselves (self-trade prevention applies).
 """
 
-import hashlib
 import logging
 import random
 import time
@@ -61,10 +60,10 @@ PERSONAS: list[Persona] = [
     Persona("추세_단타왕", "momentum", 5_000_000, 0.45),
     Persona("역발상_가치투자", "contrarian", 10_000_000, 0.35),
     Persona("역발상_줍줍이", "contrarian", 6_000_000, 0.4),
-    Persona("개미_퇴근길", "noise", 2_000_000, 0.35),
-    Persona("개미_점심시간", "noise", 2_000_000, 0.3),
-    Persona("개미_새벽감성", "noise", 1_500_000, 0.3),
-    Persona("개미_존버", "noise", 3_000_000, 0.25),
+    Persona("개미_퇴근길", "noise", 30_000_000, 0.35),
+    Persona("개미_점심시간", "noise", 30_000_000, 0.3),
+    Persona("개미_새벽감성", "noise", 25_000_000, 0.3),
+    Persona("개미_존버", "noise", 40_000_000, 0.25),
     # Investor archetypes (styles, not real people or firms)
     Persona("버핏형_가치투자", "buffett", 150_000_000, 0.3),
     Persona("멍거형_집중투자", "munger", 100_000_000, 0.2),
@@ -72,7 +71,6 @@ PERSONAS: list[Persona] = [
 ]
 BY_NAME = {p.username: p for p in PERSONAS}
 _centres: dict[int, int] = {}  # price at the last market-maker requote, per asset
-WHALE_WINDOW = timedelta(minutes=90)
 
 
 def ensure_bots(db: Session) -> list[User]:
@@ -105,29 +103,85 @@ def ensure_bots(db: Session) -> list[User]:
 
 
 def _refill(db: Session, u: User, p: Persona, now: datetime) -> None:
-    """A broke bot gets topped up at most once per day (keeps the market alive)."""
+    """A broke bot gets topped up (keeps the market alive): retail bots, which carry the
+    second-by-second tape, at most once per hour; the others at most once per day."""
     acct = db.get(Account, u.id)
     if acct.cash_balance - acct.reserved_cash >= p.capital // 5:
         return
-    tag = f"{u.id}:{now.date().isoformat()}"
+    tag = f"{u.id}:{now.strftime('%Y-%m-%dT%H') if p.kind == 'noise' else now.date().isoformat()}"
     if db.execute(select(LedgerEntry.id).where(LedgerEntry.reference_type == "bot_refill",
                                                LedgerEntry.reference_id == tag)).first():
         return
     post_entry(db, lock_account(db, u.id), entry_type="system_funding", amount=p.capital // 2,
                transaction_id=uuid.uuid4(), reference_type="bot_refill", reference_id=tag,
-               memo="Daily refill for virtual trader")
+               memo="Refill for virtual trader")
+
+
+# Unpredictable by design: drawn from the OS's random source, never from the clock or ids,
+# so nobody can work out from the code when a campaign starts or which way a trend runs.
+_sysrand = random.SystemRandom()
+_campaigns: dict[int, dict] = {}
 
 
 def whale_phase(asset_id: int, now: datetime) -> tuple[str | None, float]:
-    """('accumulate' | 'distribute' | None, strength 0..1) — deterministic per 90-minute window."""
-    secs = WHALE_WINDOW.total_seconds()
-    idx = int(now.timestamp() // secs)
-    h = int(hashlib.sha256(f"whale:{asset_id}:{idx}".encode()).hexdigest()[:8], 16)
-    if h % 100 >= 40:  # ~40% of windows have a campaign on a given asset
+    """('accumulate' | 'distribute' | None, strength 0..1). Campaigns start at random, last a
+    random 20-120 minutes and follow one of several shapes (build then dump, slow
+    accumulation, steady distribution), with quiet stretches of random length between."""
+    c = _campaigns.get(asset_id)
+    if c is None or now >= c["end"]:
+        if c is not None and c["shape"] is not None or _sysrand.random() < 0.55:
+            # quiet stretch
+            c = {"shape": None, "end": now + timedelta(minutes=_sysrand.uniform(10, 90)), "start": now, "strength": 0.0}
+        else:
+            minutes = _sysrand.uniform(20, 120)
+            c = {"shape": _sysrand.choice(("pump_dump", "accumulate", "distribute", "pump_dump")),
+                 "start": now, "end": now + timedelta(minutes=minutes),
+                 "turn": _sysrand.uniform(0.35, 0.75), "strength": _sysrand.uniform(0.35, 1.0)}
+        _campaigns[asset_id] = c
+    if c["shape"] is None:
         return None, 0.0
-    strength = 0.4 + (h >> 8) % 60 / 100
-    frac = (now.timestamp() % secs) / secs
-    return ("accumulate" if frac < 0.55 else "distribute"), strength
+    if c["shape"] in ("accumulate", "distribute"):
+        return c["shape"], c["strength"]
+    frac = (now - c["start"]) / (c["end"] - c["start"])
+    return ("accumulate" if frac < c["turn"] else "distribute"), c["strength"]
+
+
+# Per-asset market mood for the price heartbeat: a trend regime that changes at random
+# moments, volatility that clusters (calm spells, then bursts) and occasional block trades.
+_moods: dict[int, dict] = {}
+
+
+def _mood(asset_id: int, now: datetime) -> dict:
+    m = _moods.get(asset_id)
+    if m is None or now >= m["regime_end"]:
+        strong = _sysrand.random() < 0.15
+        drift = _sysrand.gauss(0, 0.26 if strong else 0.12)
+        m = {"drift": max(-0.32, min(0.32, drift)), "vol": (m or {}).get("vol", 1.0),
+             "regime_end": now + timedelta(minutes=_sysrand.expovariate(1 / 6))}
+        _moods[asset_id] = m
+    # volatility clustering: decays toward 1, jumps on random "news"
+    m["vol"] = 1 + (m["vol"] - 1) * 0.93
+    if _sysrand.random() < 0.03:
+        m["vol"] += _sysrand.uniform(1.0, 3.5)
+    return m
+
+
+def tape_orders(asset: MarketAsset, fair: int, rng: random.Random, now: datetime) -> list[tuple[str, float]]:
+    """This tick's retail orders on one asset: (side, value). Direction mixes the current trend
+    regime, short-term herding and only a faint pull toward fair value; sizes are heavy-tailed."""
+    m = _mood(asset.id, now)
+    price = max(1, asset.current_price)
+    gap = (fair - price) / price
+    n = 1 + sum(rng.random() < min(0.6, 0.12 * m["vol"]) for _ in range(2))  # bursts when volatile
+    out = []
+    for _ in range(n):
+        p_buy = 0.5 + m["drift"] + max(-0.06, min(0.06, gap * 3)) + rng.gauss(0, 0.08)
+        side = "buy" if rng.random() < max(0.08, min(0.92, p_buy)) else "sell"
+        value = get_settings().mm_level_value * rng.lognormvariate(-0.25, 0.9) * m["vol"] ** 0.5
+        if rng.random() < 0.025:  # block trade
+            value *= rng.uniform(3, 8)
+        out.append((side, value))
+    return out
 
 
 def _ret_10m(db: Session, asset_id: int, now: datetime) -> float:
@@ -260,8 +314,8 @@ _tape_cursor = 0
 def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: random.Random | None = None) -> dict:
     """The few-second heartbeat of the market: one small market order from a retail bot on
     each asset someone is watching plus one more in rotation, so every price keeps ticking
-    even when the big personas are between their (minutes-apart) decisions. Direction leans
-    toward the intraday fair value, so the tape wanders without running away."""
+    even when the big personas are between their (minutes-apart) decisions. See tape_orders
+    for how direction and size are drawn."""
     global _tape_cursor
     now = now or utcnow()
     rng = rng or random.Random()
@@ -285,19 +339,22 @@ def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: ran
         return {"orders": 0}
     orders = 0
     for asset in pick:
-        bot = rng.choice(retail)
-        p = BY_NAME[bot.username]
-        price = max(1, asset.current_price)
-        lean = max(-0.2, min(0.2, (intraday.fair_price(asset) - price) / price * 20))
-        side = "buy" if rng.random() < 0.5 + lean else "sell"
-        value = get_settings().mm_level_value * rng.uniform(0.15, 1.3)
-        _refill(db, bot, p, now)
-        if _order(db, bot, asset, side, value, rng, "tape"):
-            orders += 1
-            db.commit()
-            db.refresh(asset)
+        traded = False
+        held = {p.user_id: p.quantity - p.reserved_quantity for p in db.execute(select(Position).where(
+            Position.asset_id == asset.id, Position.user_id.in_([b.id for b in retail]))).scalars()}
+        for side, value in tape_orders(asset, intraday.fair_price(asset), rng, now):
+            # A sell comes from someone who actually holds shares, so selling pressure is real.
+            sellers = [b for b in retail if held.get(b.id, 0) > 0]
+            bot = rng.choice(sellers) if side == "sell" and sellers else rng.choice(retail)
+            _refill(db, bot, BY_NAME[bot.username], now)
+            if _order(db, bot, asset, side, value, rng, "tape"):
+                orders += 1
+                traded = True
+                db.commit()
+                db.refresh(asset)
+        if traded:
             # Ladder has mm_levels per side: re-centre only after a few steps of drift.
-            _maybe_requote(db, asset, now, True, True, steps=3)
+            _maybe_requote(db, asset, now, True, True, steps=1)
     db.commit()
     return {"orders": orders, "assets": len(pick)}
 

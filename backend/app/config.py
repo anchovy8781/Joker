@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     mm_half_spread_bps: int = 20
     mm_step_bps: int = 30
     mm_level_value: int = 300_000  # credits per level near the touch (deeper levels a bit larger)
-    mm_follow_bps: int = 7000  # quote centre = 70% last trade + 30% intraday fair value
+    mm_follow_bps: int = 9000  # quote centre = 90% last trade + 10% intraday fair value
     mm_cash_per_asset: int = 30_000_000  # system-funded bid liquidity so selling always works
     intraday_max_adj_bps: int = 400  # quote centre may move at most ±4% off the daily reference
     price_alerts_max_active: int = 20  # each level offers 0.5% of remaining inventory

@@ -137,7 +137,7 @@ def test_intraday_fair_value_follows_live_view_pace(db, asset):
     best_ask = db.execute(select(Order.limit_price).where(
         Order.asset_id == asset, Order.user_id == mm.id, Order.side == "sell", Order.status == "open")
         .order_by(Order.limit_price).limit(1)).scalar_one()
-    assert best_ask > a.reference_price * (10_000 + 50) // 10_000  # centre moved up, not just the spread
+    assert best_ask > a.reference_price * (10_000 + 20) // 10_000  # centre (90% last + 10% fair) moved up, not just the spread
 
 
 def test_intraday_adjustment_is_clamped(db, asset):

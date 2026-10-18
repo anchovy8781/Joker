@@ -7,7 +7,7 @@ by extrapolating — clearly flagged as estimates. In-game data (price, trades, 
 order book) is read directly and is exact.
 """
 
-import math
+import random
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -22,15 +22,28 @@ from app.services.youtube import DemoProvider, ProviderError, YouTubeDataAPIProv
 RESTING = ("open", "partially_filled")
 
 
+_BUCKETS = 288  # 5-minute slices of a day
+
+
+def _irregular_progress(key: str, day, frac: float) -> float:
+    """0→1 over the day, but in uneven steps: each 5-minute slice gets a random, heavy-tailed
+    share of the day's growth (quiet spells, sudden bursts). Keyed per channel and day, so
+    repeated samples agree and the path is continuous across midnight; never runs backwards."""
+    r = random.Random(f"{key}:{day.isoformat()}")
+    weights = [r.lognormvariate(0, 1.1) * (8 if r.random() < 0.02 else 1) for _ in range(_BUCKETS)]
+    total = sum(weights)
+    pos = frac * _BUCKETS
+    i = min(_BUCKETS - 1, int(pos))
+    return (sum(weights[:i]) + weights[i] * (pos - i)) / total
+
+
 def _demo_sample(demo: DemoProvider, ch: Channel, now: datetime) -> tuple[int, int, int]:
     """Smooth intraday path between two daily demo snapshots plus a small deterministic wobble."""
     day = now.date()
     a = demo.snapshot_for(ch.youtube_channel_id, ch.title, day)
     b = demo.snapshot_for(ch.youtube_channel_id, ch.title, day + timedelta(days=1))
     frac = (now - datetime(day.year, day.month, day.day, tzinfo=UTC)).total_seconds() / 86400
-    # Views arrive faster at some hours: a gentle wave that is 0 at both ends of the day, so the
-    # path is continuous across midnight and never runs backwards (counts only grow).
-    shape = frac + 0.03 * math.sin(2 * math.pi * frac)
+    shape = _irregular_progress(ch.youtube_channel_id, day, frac)
     views = int(a.view_count + (b.view_count - a.view_count) * shape)
     subs = int(a.subscriber_count + (b.subscriber_count - a.subscriber_count) * shape)
     return subs, max(views, a.view_count), a.video_count

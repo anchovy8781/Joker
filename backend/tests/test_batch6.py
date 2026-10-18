@@ -101,11 +101,22 @@ def test_bots_are_funded_once_and_hidden_from_leaderboard(db, make_user, asset):
     assert not any(n.startswith(("세력_", "개미_", "추세_", "역발상_", "버핏형", "멍거형", "골드만형")) for n in names)
 
 
-def test_whale_campaigns_are_deterministic():
+def test_whale_campaigns_are_random_but_stable_while_running():
     now = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
     assert bots.whale_phase(1, now) == bots.whale_phase(1, now)
-    phases = {bots.whale_phase(a, now)[0] for a in range(1, 60)}
-    assert phases >= {None, "accumulate"} or phases >= {None, "distribute"}
+    phases = {bots.whale_phase(a, now)[0] for a in range(1000, 1200)}
+    assert None in phases and phases & {"accumulate", "distribute"}
+
+
+def test_tape_is_not_a_fixed_pattern(asset, db):
+    """Two runs of the heartbeat from the same state produce different order flow."""
+    a = db.get(MarketAsset, asset)
+    t = datetime.now(UTC)
+    runs = [[bots.tape_orders(a, a.current_price, random.Random(), t + timedelta(seconds=4 * i)) for i in range(30)]
+            for _ in range(2)]
+    assert runs[0] != runs[1]
+    sides = [side for run in runs for tick in run for side, _ in tick]
+    assert "buy" in sides and "sell" in sides
 
 
 def test_live_panel_reports_whales(make_user, asset, db):

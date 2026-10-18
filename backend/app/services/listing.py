@@ -336,7 +336,7 @@ def _resting(mm_id: int, req: OrderRequest, fee_bps: int, reserved_cash: int) ->
 
 def requote_market_maker(db: Session, asset_id: int) -> dict:
     """Replace the market maker's quotes on one asset with a ladder of small orders around a
-    centre that follows the last traded price (70%) and the intraday fair value (30%), so
+    centre that follows the last traded price (mm_follow_bps, 90%) and the intraday fair value, so
     real volume walks the price while fundamentals keep pulling it back.
 
     Every database statement is a network round trip, so the ladder is replaced in bulk:
