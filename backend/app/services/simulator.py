@@ -49,13 +49,15 @@ def _loop() -> None:
                 lock_conn.commit()
                 log.info("market simulator running every %.1fs", get_settings().bot_interval_seconds)
                 while not _stop.is_set():
-                    started = time.monotonic()
+                    started, cpu = time.monotonic(), time.thread_time()
                     _round()
                     took = time.monotonic() - started
+                    cpu_used = time.thread_time() - cpu
                     interval = get_settings().bot_interval_seconds
-                    # Never use more than ~half the CPU: rest at least as long as the round took,
-                    # so player requests stay fast on small (free-tier) instances.
-                    _stop.wait(max(0.5, interval - took, took))
+                    # Free instances get a small slice of one CPU (0.1). Keep the simulator to a
+                    # few percent of a core and never busier than half the wall time, so player
+                    # requests and health checks are never starved.
+                    _stop.wait(max(0.5, interval - took, took, cpu_used * 30))
                 lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LOCK_KEY})
                 lock_conn.commit()
         except Exception:

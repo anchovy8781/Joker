@@ -7,7 +7,7 @@ services:
     plan: free
     dockerfilePath: ./deploy/render/Dockerfile
     dockerContext: .
-    healthCheckPath: /api/market/hours
+    healthCheckPath: /healthz           # web server only (frontend/app/healthz)
     autoDeploy: true
     envVars:
       - key: YEX_DATABASE_URL          # Supabase "Session pooler" URI (see guide), with +psycopg

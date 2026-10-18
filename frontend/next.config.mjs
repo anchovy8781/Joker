@@ -12,7 +12,8 @@ const securityHeaders = [
       "default-src 'self'",
       // Next.js needs inline scripts for hydration; no third-party script origins are allowed.
       "script-src 'self' 'unsafe-inline'" + (process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""),
-      "style-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+      "font-src 'self' data: https://cdn.jsdelivr.net",
       "img-src 'self' data: https://yt3.ggpht.com https://yt3.googleusercontent.com https://i.ytimg.com",
       "connect-src 'self'",
       "frame-ancestors 'none'",
