@@ -34,7 +34,7 @@ from app.config import get_settings
 from app.errors import AppError
 from app.models import Account, Channel, LedgerEntry, MarketAsset, MarketBar, Position, Trade, User
 from app.security import utcnow
-from app.services import intraday
+from app.services import intraday, market_hours
 from app.services.fees import bps_down, bps_up
 from app.services.ledger import lock_account, post_entry
 from app.services.listing import fund_market_maker, get_market_maker, requote_market_maker
@@ -375,7 +375,7 @@ def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, 
     try:
         with db.begin_nested():
             r = place_order(db, bot, req)
-        return r.order.status != "rejected"
+        return r.order.status not in ("rejected", "scheduled")
     except AppError:
         return False
 
@@ -462,7 +462,9 @@ def _tape_asset(db: Session, asset: MarketAsset, retail: list[User], rng: random
         else:
             if cash.get(bot.id, 0) < get_settings().mm_level_value:
                 _refill(db, bot, BY_NAME[bot.username], now)
-                cash[bot.id] = db.get(Account, bot.id).cash_balance
+                db.commit()
+                acct = db.get(Account, bot.id)
+                cash[bot.id] = acct.cash_balance - acct.reserved_cash
             qty = min(max(1, int(value // price)), max(0, cash.get(bot.id, 0) // (price * 2)))
         qty = min(qty, get_settings().max_order_quantity)
         if qty <= 0:
@@ -473,6 +475,9 @@ def _tape_asset(db: Session, asset: MarketAsset, retail: list[User], rng: random
             ok = _order(db, bot, asset, side, qty * price, rng, "tape_full")
         else:
             ok = filled > 0
+        # Commit every fill: the next wait_for_players() must not hold the asset and market-maker
+        # rows that a person's order needs.
+        db.commit()
         if ok:
             orders += 1
             if side == "sell":
@@ -481,7 +486,6 @@ def _tape_asset(db: Session, asset: MarketAsset, retail: list[User], rng: random
                 cash[bot.id] = cash.get(bot.id, 0) - qty * price
                 held[(bot.id, asset.id)] = held.get((bot.id, asset.id), 0) + qty
         price = max(1, asset.current_price)
-    db.commit()  # one commit per asset: the market maker's rows are locked only briefly
     if orders:
         # Ladder has mm_levels per side: re-centre only after a few steps of drift.
         _maybe_requote(db, asset, now, True, True, steps=3)
@@ -496,6 +500,8 @@ def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: ran
     seconds even with a distant database. See tape_orders for direction and size."""
     global _tape_cursor
     now = now or utcnow()
+    if not market_hours.is_open(now):  # after hours players can only reserve; bots wait too
+        return {"orders": 0, "closed": True}
     rng = rng or random.Random()
     assets = db.execute(select(MarketAsset).join(Channel, Channel.id == MarketAsset.channel_id)
                         .where(Channel.listing_status == "listed", MarketAsset.trading_status == "active")
@@ -541,6 +547,8 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
     never wait long behind a round; otherwise the caller commits."""
     s = get_settings()
     now = now or utcnow()
+    if not market_hours.is_open(now):
+        return {"assets": 0, "orders": 0, "closed": True}
     rng = rng or random.Random()
     bots = ensure_bots(db)
     mm = get_market_maker(db)

@@ -104,6 +104,9 @@ def audit_logs(admin: User = Depends(require_admin), db: Session = Depends(get_d
 def halt(asset_id: int, body: ReasonIn, request: Request, admin: User = Depends(require_admin),
          db: Session = Depends(get_db)):
     a = run_in_transaction(db, lambda s: listing.halt(s, asset_id, body.reason, admin.id, _rid(request)))
+    from app import fastpath
+
+    fastpath.clear_responses()
     return {"id": a.id, "trading_status": a.trading_status, "halt_reason": a.halt_reason}
 
 
@@ -111,6 +114,9 @@ def halt(asset_id: int, body: ReasonIn, request: Request, admin: User = Depends(
 def resume(asset_id: int, body: ReasonIn, request: Request, admin: User = Depends(require_admin),
            db: Session = Depends(get_db)):
     a = run_in_transaction(db, lambda s: listing.resume(s, asset_id, body.reason, admin.id, _rid(request)))
+    from app import fastpath
+
+    fastpath.clear_responses()
     return {"id": a.id, "trading_status": a.trading_status, "halt_reason": a.halt_reason}
 
 
@@ -449,8 +455,11 @@ def delist(asset_id: int, body: ReasonIn, request: Request, admin: User = Depend
     out = run_in_transaction(db, lambda s: listing.delist(s, asset_id, body.reason, admin.id, _rid(request)))
     from app import fastpath
 
-    fastpath.clear()  # market lists must drop the stock right away
+    fastpath.clear_responses()  # market lists must drop the stock right away
     return out
+
+
+HALT_ALL_TAG = "전체정지: "
 
 
 @router.post("/market/halt-all")
@@ -459,17 +468,30 @@ def halt_all(body: ReasonIn, request: Request, admin: User = Depends(require_adm
     ids = db.execute(select(MarketAsset.id).join(Channel, Channel.id == MarketAsset.channel_id).where(
         Channel.listing_status == "listed", MarketAsset.trading_status == "active")).scalars().all()
     for aid in ids:
-        run_in_transaction(db, lambda s, aid=aid: listing.halt(s, aid, body.reason, admin.id, _rid(request)))
+        run_in_transaction(db, lambda s, aid=aid: listing.halt(s, aid, f"{HALT_ALL_TAG}{body.reason}", admin.id, _rid(request)))
+    from app import fastpath
+
+    fastpath.clear_responses()
     return {"halted": len(ids)}
 
 
 @router.post("/market/resume-all")
 def resume_all(body: ReasonIn, request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    # Only what 전체 거래 정지 stopped: individual investigation halts stay as they are.
     ids = db.execute(select(MarketAsset.id).join(Channel, Channel.id == MarketAsset.channel_id).where(
-        Channel.listing_status == "listed", MarketAsset.trading_status == "halted")).scalars().all()
+        Channel.listing_status == "listed", MarketAsset.trading_status == "halted",
+        MarketAsset.halt_reason.startswith(HALT_ALL_TAG))).scalars().all()
+    resumed, failed = [], []
     for aid in ids:
-        run_in_transaction(db, lambda s, aid=aid: listing.resume(s, aid, body.reason, admin.id, _rid(request)))
-    return {"resumed": len(ids)}
+        try:
+            run_in_transaction(db, lambda s, aid=aid: listing.resume(s, aid, body.reason, admin.id, _rid(request)))
+            resumed.append(aid)
+        except AppError as exc:
+            failed.append({"asset_id": aid, "reason": exc.message})
+    from app import fastpath
+
+    fastpath.clear_responses()
+    return {"resumed": len(resumed), "failed": failed}
 
 
 @router.get("/overview")
@@ -507,7 +529,7 @@ def overview(admin: User = Depends(require_admin), db: Session = Depends(get_db)
 
 
 @router.get("/users")
-def users(q: str | None = Query(default=None, max_length=32), limit: int = Query(default=50, le=200),
+def users(q: str | None = Query(default=None, max_length=32), limit: int = Query(default=50, ge=1, le=200),
           admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     """Players with balance, holdings value and status (search by name)."""
     from sqlalchemy import func

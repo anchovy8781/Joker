@@ -88,6 +88,11 @@ def cache_put(key: str, ttl: float, status: int, body: bytes, media_type: str) -
     _cache[key] = (time.monotonic() + ttl, status, body, media_type)
 
 
+def clear_responses() -> None:
+    """Forget shared responses (after an operator changes what the market shows)."""
+    _cache.clear()
+
+
 def clear() -> None:
     _cache.clear()
     _windows.clear()

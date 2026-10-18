@@ -221,7 +221,8 @@ def growth(asset_id: int, db: Session = Depends(get_db)):
     now = utcnow()
     points: dict[str, list[tuple[datetime, int]]] = {"subscriber_count": [], "view_count": []}
     for t, subs, views in db.execute(select(ChannelSample.observed_at, ChannelSample.subscriber_count,
-                                            ChannelSample.view_count).where(ChannelSample.channel_id == c.id)).all():
+                                            ChannelSample.view_count).where(
+        ChannelSample.channel_id == c.id, ChannelSample.observed_at >= now - timedelta(days=30))).all():
         if subs is not None:
             points["subscriber_count"].append((t, int(subs)))
         if views is not None:

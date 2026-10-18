@@ -31,24 +31,47 @@ function persistSoon() {
     try {
       const out: Record<string, unknown> = {};
       let n = 0;
-      for (const [k, v] of cache) if (PERSIST.test(k) && n++ < 40) out[k] = v;
+      for (const [k, v] of [...cache].filter(([k]) => PERSIST.test(k)).slice(-40)) { out[k] = v; n++; }
       localStorage.setItem(STORE_KEY, JSON.stringify(out));
     } catch { /* quota or private mode: ignore */ }
   }, 1500);
 }
 
-function fetchShared<T>(path: string, fresh = false): Promise<T> {
-  let p = inflight.get(path) as Promise<T> | undefined;
+// Every request gets a sequence number; only the newest one per path may write the cache
+// (an older poll finishing late must not overwrite data fetched after an order). A sign-in
+// change bumps the generation, so answers for the previous user are dropped.
+let generation = 0;
+let seqCounter = 0;
+const latest = new Map<string, number>();
+
+function fetchShared<T>(path: string, fresh = false): Promise<T | undefined> {
+  let p = inflight.get(path) as Promise<T | undefined> | undefined;
   if (!p || fresh) {
-    p = api<T>(path).then((d) => { cache.set(path, d); if (PERSIST.test(path)) persistSoon(); return d; })
-      .finally(() => inflight.delete(path));
-    inflight.set(path, p);
+    const seq = ++seqCounter;
+    const gen = generation;
+    latest.set(path, seq);
+    const q: Promise<T | undefined> = api<T>(path).then((d) => {
+      if (gen !== generation) return undefined; // answered for the previous session
+      if (latest.get(path) === seq) {
+        cache.delete(path); // re-insert: the most recently used paths are the ones persisted
+        cache.set(path, d);
+        if (PERSIST.test(path)) persistSoon();
+      }
+      return cache.has(path) ? (cache.get(path) as T) : d;
+    }).finally(() => { if (inflight.get(path) === q) inflight.delete(path); });
+    inflight.set(path, q);
+    p = q;
   }
   return p;
 }
 
 /** Forget cached GET responses (e.g. after logout or an action that changes them). */
 export function clearApiCache(prefix = "") {
+  if (!prefix) {
+    generation++;
+    inflight.clear();
+    latest.clear();
+  }
   for (const k of [...cache.keys()]) if (k.startsWith(prefix)) cache.delete(k);
   try { if (typeof window !== "undefined") localStorage.removeItem(STORE_KEY); } catch { /* ignore */ }
 }
@@ -82,6 +105,7 @@ export function useApi<T>(path: string | null, pollMs?: number) {
     if (!path) return;
     try {
       const d = await fetchShared<T>(path, fresh);
+      if (d === undefined) return; // dropped: belonged to a previous sign-in
       if (alive.current) {
         setData(d);
         setError(null);

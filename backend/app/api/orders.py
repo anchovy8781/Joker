@@ -19,6 +19,27 @@ router = APIRouter(prefix="/api/orders", tags=["orders"])
 log = logging.getLogger("yex.api.orders")
 
 
+def _after_trades(trades: list, asset_id: int) -> None:
+    """Abuse checks and auto-order triggers run after the trade commits, in their own
+    transaction; failures are logged only."""
+    rdb = session_factory()()
+    try:
+        risk.check_trades(rdb, trades)
+        auto_orders.evaluate(rdb, asset_id=asset_id)
+        rdb.commit()
+    except Exception:
+        rdb.rollback()
+        log.exception("post-trade risk check failed")
+    finally:
+        rdb.close()
+
+
+def _fills_of(db: Session, order_id: int) -> list[TradeOut]:
+    return [TradeOut.model_validate(t) for t in db.execute(
+        select(Trade).where((Trade.buy_order_id == order_id) | (Trade.sell_order_id == order_id))
+        .order_by(Trade.id)).scalars()]
+
+
 @router.post("", response_model=PlaceOrderOut)
 def place(body: OrderIn, response: Response, user: User = Depends(require_user),
           db: Session = Depends(get_db)):
@@ -41,18 +62,7 @@ def place(body: OrderIn, response: Response, user: User = Depends(require_user),
             select(Trade).where((Trade.buy_order_id == result.order.id) | (Trade.sell_order_id == result.order.id))
             .order_by(Trade.id)).scalars()]
     elif result.trades:
-        # Abuse checks and auto-order triggers run after the trade commits, in their own
-        # transaction; failures are logged only.
-        rdb = session_factory()()
-        try:
-            risk.check_trades(rdb, result.trades)
-            auto_orders.evaluate(rdb, asset_id=body.asset_id)
-            rdb.commit()
-        except Exception:
-            rdb.rollback()
-            log.exception("post-trade risk check failed")
-        finally:
-            rdb.close()
+        _after_trades(result.trades, body.asset_id)
     response.status_code = 200 if result.replayed else 201
     return PlaceOrderOut(order=order_out(result.order), fills=fills, replayed=result.replayed)
 
@@ -99,25 +109,32 @@ def amend(order_id: int, body: OrderAmendIn, response: Response, user: User = De
 
     def tx(session: Session):
         u = session.get(User, user_id)
-        done = session.execute(select(Order).where(Order.user_id == user_id,
-                                                   Order.idempotency_key == body.idempotency_key)).scalar_one_or_none()
-        if done is not None:  # a retry of an amendment that already went through
-            return engine.PlaceResult(order=done, replayed=True)
         old = session.get(Order, order_id)
         if old is None or old.user_id != user_id:
             raise AppError(404, "ORDER_NOT_FOUND", "Order not found")
+        req = engine.OrderRequest(asset_id=old.asset_id, side=old.side, order_type="limit",
+                                  quantity=body.quantity or old.remaining_quantity,
+                                  limit_price=body.limit_price or old.limit_price,
+                                  idempotency_key=body.idempotency_key)
+        done = session.execute(select(Order).where(Order.user_id == user_id,
+                                                   Order.idempotency_key == body.idempotency_key)).scalar_one_or_none()
+        if done is not None:  # a retry: only the same amendment of this order counts as one
+            if done.request_hash != req.digest() or old.status != "canceled" or old.status_reason != "USER_AMENDED":
+                raise AppError(409, "IDEMPOTENCY_CONFLICT", "이 요청 키는 이미 다른 주문에 쓰였어요")
+            return engine.PlaceResult(order=done, replayed=True)
         if old.order_type != "limit":
             raise AppError(409, "NOT_AMENDABLE", "지정가 주문만 정정할 수 있어요")
         if body.limit_price is None and body.quantity is None:
             raise AppError(422, "NOTHING_TO_CHANGE", "바꿀 가격이나 수량을 입력해 주세요")
         engine.cancel_order(session, u, order_id, reason="USER_AMENDED")
-        req = engine.OrderRequest(asset_id=old.asset_id, side=old.side, order_type="limit",
-                                  quantity=body.quantity or old.remaining_quantity,
-                                  limit_price=body.limit_price or old.limit_price,
-                                  idempotency_key=body.idempotency_key)
         return engine.place_order(session, u, req)
 
     result = run_in_transaction(db, tx)
     response.status_code = 200
-    return PlaceOrderOut(order=order_out(result.order), fills=[TradeOut.model_validate(t) for t in result.trades],
-                         replayed=result.replayed)
+    if result.replayed:
+        fills = _fills_of(db, result.order.id)
+    else:
+        fills = [TradeOut.model_validate(t) for t in result.trades]
+        if result.trades:  # amending into the book fills it: same checks as a new order
+            _after_trades(result.trades, result.order.asset_id)
+    return PlaceOrderOut(order=order_out(result.order), fills=fills, replayed=result.replayed)

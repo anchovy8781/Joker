@@ -440,7 +440,7 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
     centre = min(max(centre, lo), hi)
     fund_market_maker(db, mm)
     account = lock_account(db, mm.id)
-    pos = db.get(Position, (mm.id, asset_id))
+    pos = db.get(Position, (mm.id, asset_id), populate_existing=True)  # never a cached copy
     inventory = (pos.quantity - pos.reserved_quantity) if pos else 0
     n_assets = max(1, db.query(MarketAsset).count())
     cash_budget = (account.cash_balance - account.reserved_cash) // n_assets
