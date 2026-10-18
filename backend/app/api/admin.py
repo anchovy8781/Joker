@@ -437,3 +437,91 @@ def hide_chat(message_id: int, body: ReasonIn, request: Request, admin: User = D
     msg = chat.hide_message(db, message_id, admin.id, body.reason, _rid(request))
     db.commit()
     return {"id": msg.id, "hidden": msg.hidden_at is not None}
+
+
+# ---------------------------------------------------------------- operations (one-touch)
+
+
+@router.post("/assets/{asset_id}/delist")
+def delist(asset_id: int, body: ReasonIn, request: Request, admin: User = Depends(require_admin),
+           db: Session = Depends(get_db)):
+    """상장폐지: stop trading for good and pay every holder out at the last price."""
+    out = run_in_transaction(db, lambda s: listing.delist(s, asset_id, body.reason, admin.id, _rid(request)))
+    from app import fastpath
+
+    fastpath.clear()  # market lists must drop the stock right away
+    return out
+
+
+@router.post("/market/halt-all")
+def halt_all(body: ReasonIn, request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Emergency stop: halt every active listed stock (resume-all undoes it)."""
+    ids = db.execute(select(MarketAsset.id).join(Channel, Channel.id == MarketAsset.channel_id).where(
+        Channel.listing_status == "listed", MarketAsset.trading_status == "active")).scalars().all()
+    for aid in ids:
+        run_in_transaction(db, lambda s, aid=aid: listing.halt(s, aid, body.reason, admin.id, _rid(request)))
+    return {"halted": len(ids)}
+
+
+@router.post("/market/resume-all")
+def resume_all(body: ReasonIn, request: Request, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    ids = db.execute(select(MarketAsset.id).join(Channel, Channel.id == MarketAsset.channel_id).where(
+        Channel.listing_status == "listed", MarketAsset.trading_status == "halted")).scalars().all()
+    for aid in ids:
+        run_in_transaction(db, lambda s, aid=aid: listing.resume(s, aid, body.reason, admin.id, _rid(request)))
+    return {"resumed": len(ids)}
+
+
+@router.get("/overview")
+def overview(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """운영 현황 at a glance."""
+    from datetime import timedelta
+
+    from sqlalchemy import func, text
+
+    from app.models import Account, MarketBar
+
+    now = utcnow()
+    day = now - timedelta(hours=24)
+    people = db.execute(select(func.count(User.id), func.count(User.id).filter(User.created_at >= day),
+                               func.count(User.id).filter(User.last_login_at >= day),
+                               func.count(User.id).filter(User.status != "active"))
+                        .where(User.role == "user")).one()
+    cash = db.execute(select(func.coalesce(func.sum(Account.cash_balance), 0)).join(User, User.id == Account.user_id)
+                      .where(User.role == "user")).scalar_one()
+    vol = db.execute(select(func.coalesce(func.sum(MarketBar.trade_count), 0), func.coalesce(func.sum(MarketBar.turnover), 0))
+                     .where(MarketBar.interval == "1m", MarketBar.timestamp >= day)).one()
+    people_trades = db.execute(text(
+        "SELECT count(*) FROM trades t JOIN users b ON b.id = t.buyer_id JOIN users s ON s.id = t.seller_id "
+        "WHERE t.executed_at >= :d AND (b.role = 'user' OR s.role = 'user')"), {"d": day}).scalar_one()
+    assets = db.execute(select(func.count(MarketAsset.id), func.count(MarketAsset.id).filter(MarketAsset.trading_status == "halted"))
+                        .join(Channel, Channel.id == MarketAsset.channel_id).where(Channel.listing_status == "listed")).one()
+    pending = db.execute(select(func.count(Channel.id)).where(Channel.listing_status == "pending")).scalar_one()
+    reports = db.execute(select(func.count(Report.id)).where(Report.status == "open")).scalar_one()
+    risks = db.execute(select(func.count(RiskEvent.id)).where(RiskEvent.reviewed_at.is_(None))).scalar_one()
+    return {"users": {"total": people[0], "new_24h": people[1], "active_24h": people[2], "restricted": people[3]},
+            "user_cash": int(cash),
+            "trades_24h": int(vol[0]), "turnover_24h": int(vol[1]), "player_trades_24h": int(people_trades),
+            "listed": assets[0], "halted": assets[1], "pending_requests": pending,
+            "open_reports": reports, "open_risk_events": risks}
+
+
+@router.get("/users")
+def users(q: str | None = Query(default=None, max_length=32), limit: int = Query(default=50, le=200),
+          admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Players with balance, holdings value and status (search by name)."""
+    from sqlalchemy import func
+
+    from app.models import Account, Position
+
+    holdings = (select(Position.user_id, func.coalesce(func.sum(Position.quantity * MarketAsset.current_price), 0).label("v"))
+                .join(MarketAsset, MarketAsset.id == Position.asset_id).group_by(Position.user_id).subquery())
+    stmt = (select(User, Account.cash_balance, func.coalesce(holdings.c.v, 0))
+            .join(Account, Account.user_id == User.id).outerjoin(holdings, holdings.c.user_id == User.id)
+            .where(User.role.in_(("user", "admin"))))
+    if q:
+        stmt = stmt.where(User.normalized_username.contains(q.lower()))
+    rows = db.execute(stmt.order_by((Account.cash_balance + func.coalesce(holdings.c.v, 0)).desc()).limit(limit)).all()
+    return [{"id": u.id, "username": u.username, "role": u.role, "status": u.status, "cash": int(c),
+             "holdings_value": int(h), "equity": int(c) + int(h), "created_at": u.created_at,
+             "last_login_at": u.last_login_at} for u, c, h in rows]

@@ -7,7 +7,7 @@ import { ChannelPicker } from "@/components/ChannelPicker";
 import type { ChannelPreviewData } from "@/components/ChannelPreview";
 import { Card, Empty, ErrorBox } from "@/components/ui";
 import { api, ApiError, type Freshness } from "@/lib/api";
-import { credits, dateTime } from "@/lib/format";
+import { compact, credits, dateTime } from "@/lib/format";
 import { useApi } from "@/lib/hooks";
 
 type AdminChannel = { id: number; youtube_channel_id: string; title: string; handle: string | null; thumbnail_url: string | null; data_source: string; listing_status: string; data_quality_status: string; freshness: Freshness; requested_by: string | null; request_note: string | null; asset: { id: number; symbol: string; trading_status: string; halt_reason: string | null; reference_price: number; current_price?: number; celebrity_until: string | null; new_video_until: string | null } | null };
@@ -19,11 +19,11 @@ type Recon = { id: number; status: string; checked_accounts: number; mismatches:
 type PU = { id: number; symbol: string; effective_date: string; status: string; old_price: number; new_price: number; error: string | null };
 type Ticket = { id: number; status: string; reason?: string; message?: string; target_type?: string; target_id?: string | null; user_id?: number; created_at: string; resolution: string | null };
 
-const TABS = [["listing", "상장 승인"], ["settings", "⚙ 설정"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
+const TABS = [["overview", "운영 현황"], ["listing", "상장 승인"], ["users", "사용자"], ["settings", "⚙ 설정"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
 
 export default function AdminPage() {
   const { user, ready } = useAuth();
-  const [tab, setTab] = useState<(typeof TABS)[number][0]>("listing");
+  const [tab, setTab] = useState<(typeof TABS)[number][0]>("overview");
   useEffect(() => {
     // Deep link from notifications, e.g. /admin?tab=listing (remote approval from the phone app).
     const t = new URLSearchParams(window.location.search).get("tab");
@@ -37,7 +37,9 @@ export default function AdminPage() {
         {TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} className={`chip px-3 py-1.5 ${tab === k ? "chip-on" : ""}`}>{l}</button>)}
       </div>
       <p className="text-xs text-muted">모든 관리자 조치는 관리자 ID·사유·대상·시각과 함께 감사 로그에 기록됩니다. 거래·원장 기록은 수정/삭제할 수 없습니다.</p>
+      {tab === "overview" && <Overview go={(t) => setTab(t)} />}
       {tab === "listing" && <Listing />}
+      {tab === "users" && <Users />}
       {tab === "settings" && <SettingsTab />}
       {tab === "risk" && <Risk />}
       {tab === "audit" && <AuditTab />}
@@ -71,6 +73,7 @@ function Listing() {
   const [msg, setMsg] = useState<{ id: number; text: string } | null>(null);
   const [preview, setPreview] = useState<ChannelPreviewData | null>(null);
   const [pickKey, setPickKey] = useState(0);
+  const [confirmDelist, setConfirmDelist] = useState<number | null>(null);
 
   const rows = data ?? [];
   const pending = rows.filter((c) => c.listing_status === "pending");
@@ -116,7 +119,8 @@ function Listing() {
       </section>
 
       <details className="rounded-3xl bg-panel p-4">
-        <summary className="cursor-pointer font-bold">상장된 종목 {listed.length}개 · 거래 켜기/끄기</summary>
+        <summary className="cursor-pointer font-bold">상장된 종목 {listed.length}개 · 거래 켜기/끄기 · 상장폐지</summary>
+        <p className="mt-2 text-xs text-muted">상장폐지하면 거래가 영구히 멈추고, 모든 주문이 취소되며, 보유자에게 마지막 체결가로 정산돼요. 되돌릴 수 없어요.</p>
         <ul className="mt-2 divide-y divide-line">
           {listed.map((c) => c.asset && (
             <li key={c.id} className="flex items-center gap-3 py-2">
@@ -131,6 +135,18 @@ function Listing() {
                 className={`shrink-0 whitespace-nowrap rounded-full px-3 py-2 text-sm font-semibold ${c.asset.trading_status === "active" ? "bg-emerald-500/15 text-emerald-300" : "bg-red-500/15 text-red-300"}`}>
                 {c.asset.trading_status === "active" ? "● 거래 중" : "○ 정지"}
               </button>
+              {confirmDelist === c.id ? (
+                <span className="flex shrink-0 gap-1">
+                  <button className="btn-danger px-3" disabled={busy !== null}
+                    onClick={async () => { setConfirmDelist(null); await tap(c.id, `/api/admin/assets/${c.asset!.id}/delist`, `${c.asset!.symbol} 상장폐지 · 보유자 정산 완료`, { reason: "관리자 상장폐지" }); }}>
+                    폐지 확정
+                  </button>
+                  <button className="btn-ghost px-3" onClick={() => setConfirmDelist(null)}>취소</button>
+                </span>
+              ) : (
+                <button className="shrink-0 rounded-full px-2 py-2 text-xs font-semibold text-muted hover:text-up" disabled={busy !== null}
+                  onClick={() => setConfirmDelist(c.id)}>상장폐지</button>
+              )}
             </li>
           ))}
         </ul>
@@ -148,6 +164,143 @@ function Listing() {
           )}
         </div>
       </details>
+    </div>
+  );
+}
+
+type OverviewData = { users: { total: number; new_24h: number; active_24h: number; restricted: number }; user_cash: number;
+  trades_24h: number; turnover_24h: number; player_trades_24h: number; listed: number; halted: number;
+  pending_requests: number; open_reports: number; open_risk_events: number };
+
+function Overview({ go }: { go: (t: (typeof TABS)[number][0]) => void }) {
+  const { data, reload } = useApi<OverviewData>("/api/admin/overview", 15_000);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [confirmHalt, setConfirmHalt] = useState(false);
+  const act = async (path: string, done: string) => {
+    setBusy(true); setMsg(null);
+    try { await api(path, { method: "POST", body: { reason: "관리자 원터치 처리" } }); setMsg(`✓ ${done}`); reload(); }
+    catch (e) { setMsg(`⚠ ${e instanceof ApiError ? e.message : "실패했어요"}`); }
+    finally { setBusy(false); setConfirmHalt(false); }
+  };
+  if (!data) return <Empty>불러오는 중…</Empty>;
+  const tile = (label: string, value: string, sub?: string, onClick?: () => void) => (
+    <button type="button" onClick={onClick} disabled={!onClick}
+      className="rounded-3xl bg-panel p-4 text-left disabled:cursor-default">
+      <div className="text-sm text-muted">{label}</div>
+      <div className="mt-1 text-xl font-bold tabular-nums">{value}</div>
+      {sub && <div className="mt-0.5 text-xs text-muted">{sub}</div>}
+    </button>
+  );
+  return (
+    <div className="space-y-4">
+      {msg && <p role="status" className="rounded-xl bg-panel2 px-3 py-2 text-sm">{msg}</p>}
+      {(data.pending_requests > 0 || data.open_reports > 0 || data.open_risk_events > 0) && (
+        <div className="grid gap-2 sm:grid-cols-3">
+          {data.pending_requests > 0 && <button className="btn-primary py-3" onClick={() => go("listing")}>상장 요청 {data.pending_requests}건 처리하기</button>}
+          {data.open_reports > 0 && <button className="btn-ghost py-3" onClick={() => go("tickets")}>신고 {data.open_reports}건 보기</button>}
+          {data.open_risk_events > 0 && <button className="btn-ghost py-3" onClick={() => go("risk")}>위험 이벤트 {data.open_risk_events}건</button>}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        {tile("전체 사용자", `${credits(data.users.total)}명`, `24시간 신규 ${data.users.new_24h} · 접속 ${data.users.active_24h}`, () => go("users"))}
+        {tile("사용자 보유 현금", `₩${compact(data.user_cash)}`, "가상 크레딧 합계")}
+        {tile("24시간 체결", `${credits(data.trades_24h)}건`, `사람 참여 ${credits(data.player_trades_24h)}건`)}
+        {tile("24시간 거래대금", `₩${compact(data.turnover_24h)}`)}
+        {tile("상장 종목", `${data.listed}개`, data.halted ? `정지 ${data.halted}개` : "모두 거래 중", () => go("listing"))}
+        {tile("이용 제한 사용자", `${data.users.restricted}명`, undefined, () => go("users"))}
+      </div>
+      <div className="rounded-3xl bg-panel p-4">
+        <div className="font-bold">전체 시장</div>
+        <p className="mt-1 text-sm text-muted">긴급 상황에서 모든 종목의 거래를 한 번에 멈추거나 다시 열어요.</p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {confirmHalt ? (
+            <button className="btn-danger py-3" disabled={busy} onClick={() => act("/api/admin/market/halt-all", "전체 거래 정지")}>정말 전체 정지</button>
+          ) : (
+            <button className="btn-danger py-3" disabled={busy} onClick={() => setConfirmHalt(true)}>전체 거래 정지</button>
+          )}
+          <button className="btn-primary py-3" disabled={busy} onClick={() => act("/api/admin/market/resume-all", "전체 거래 재개")}>전체 거래 재개</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type UserRow = { id: number; username: string; role: string; status: string; cash: number; holdings_value: number; equity: number;
+  created_at: string; last_login_at: string | null };
+
+function Users() {
+  const [q, setQ] = useState("");
+  const { data, reload } = useApi<UserRow[]>(`/api/admin/users${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`);
+  const [open, setOpen] = useState<number | null>(null);
+  const [amount, setAmount] = useState(100_000);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const run = async (path: string, body: unknown, done: string) => {
+    setBusy(true); setMsg(null);
+    try { await api(path, { method: "POST", body }); setMsg(`✓ ${done}`); reload(); }
+    catch (e) { setMsg(`⚠ ${e instanceof ApiError ? e.message : "실패했어요"}`); }
+    finally { setBusy(false); }
+  };
+  const statusLabel: Record<string, string> = { active: "정상", restricted: "제한", suspended: "정지" };
+  return (
+    <div className="space-y-3">
+      <input className="input" placeholder="아이디로 검색" value={q} onChange={(e) => setQ(e.target.value)} />
+      {msg && <p role="status" className="rounded-xl bg-panel2 px-3 py-2 text-sm">{msg}</p>}
+      {!data ? <Empty>불러오는 중…</Empty> : data.length === 0 ? <Card><Empty>사용자가 없어요</Empty></Card> : (
+        <ul className="space-y-2">
+          {data.map((u) => (
+            <li key={u.id} className="rounded-2xl bg-panel p-3">
+              <button type="button" className="flex w-full items-center gap-3 text-left" onClick={() => setOpen(open === u.id ? null : u.id)}>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-bold">{u.username} {u.role === "admin" && <span className="text-xs text-primary">관리자</span>}</div>
+                  <div className="text-xs text-muted">가입 {dateTime(u.created_at)} · 최근 접속 {u.last_login_at ? dateTime(u.last_login_at) : "—"}</div>
+                </div>
+                <div className="text-right">
+                  <div className="font-bold tabular-nums">₩{compact(u.equity)}</div>
+                  <div className={`text-xs ${u.status === "active" ? "text-muted" : "text-up"}`}>{statusLabel[u.status] ?? u.status}</div>
+                </div>
+              </button>
+              {open === u.id && (
+                <div className="mt-3 space-y-3 border-t border-line pt-3 text-sm">
+                  <div className="text-muted">현금 ₩{credits(u.cash)} · 보유 주식 평가 ₩{credits(u.holdings_value)}</div>
+                  <div>
+                    <div className="mb-1.5 font-semibold">크레딧 지급 / 회수</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[10_000, 100_000, 1_000_000].map((v) => (
+                        <button key={v} className={`chip px-3 py-1.5 ${amount === v ? "chip-on" : ""}`} onClick={() => setAmount(v)}>₩{compact(v)}</button>
+                      ))}
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button className="btn-primary py-2.5" disabled={busy}
+                        onClick={() => run("/api/admin/adjustments", { user_id: u.id, amount, reason: `관리자 지급 (${u.username})`,
+                          idempotency_key: crypto.randomUUID().replace(/-/g, "").slice(0, 32) }, `${u.username}에게 ₩${credits(amount)} 지급`)}>지급</button>
+                      <button className="btn-danger py-2.5" disabled={busy || u.cash < amount}
+                        onClick={() => run("/api/admin/adjustments", { user_id: u.id, amount: -amount, reason: `관리자 회수 (${u.username})`,
+                          idempotency_key: crypto.randomUUID().replace(/-/g, "").slice(0, 32) }, `${u.username}에게서 ₩${credits(amount)} 회수`)}>회수</button>
+                    </div>
+                  </div>
+                  {u.role === "user" && (
+                    <div>
+                      <div className="mb-1.5 font-semibold">이용 상태</div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(["active", "restricted", "suspended"] as const).map((st) => (
+                          <button key={st} disabled={busy || u.status === st}
+                            className={`rounded-xl py-2.5 font-semibold ${u.status === st ? "bg-text text-bg" : "bg-panel2 text-text"}`}
+                            onClick={() => run(`/api/admin/users/${u.id}/status`, { status: st }, `${u.username} → ${statusLabel[st]}`)}>
+                            {statusLabel[st]}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1 text-xs text-muted">제한: 매수·매도 불가 · 정지: 로그인 불가</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

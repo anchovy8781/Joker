@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.errors import AppError
-from app.models import Account, Channel, ChannelMetric, MarketAsset, Order, Position, User
+from app.models import Account, Channel, ChannelMetric, MarketAsset, Order, Position, Trade, User
 from app.security import utcnow
 from app.services import bars, market_hours
 from app.services.audit import write_audit
@@ -222,6 +222,83 @@ def halt(db: Session, asset_id: int, reason: str, actor_id: int | None, request_
     notify_holders(db, asset_id, "asset_halted", f"{asset.symbol} 거래 정지",
                    f"보유 종목 {asset.symbol}의 거래가 정지되었습니다. 사유: {reason}", f"/assets/{asset_id}")
     return asset
+
+
+def delist(db: Session, asset_id: int, reason: str, actor_id: int, request_id: str | None = None,
+           settlement_price: int | None = None) -> dict:
+    """상장폐지: trading stops for good, every resting order and auto order on the stock is
+    cancelled (reservations released), and every holder is paid out in credits at the
+    settlement price (default: the last traded price): the market maker buys the shares back
+    in fee-free settlement trades, funded by the system. Ledger, trades and the audit log
+    record everything, so reconciliation stays exact."""
+    from app.models import AutoOrder
+
+    _require_admin(db, actor_id)
+    asset = lock_asset(db, asset_id)
+    channel = db.get(Channel, asset.channel_id)
+    if channel.listing_status != "listed":
+        raise AppError(409, "NOT_LISTED", "상장된 종목만 상장폐지할 수 있어요")
+    price = settlement_price or asset.current_price or asset.reference_price
+    if price <= 0:
+        raise AppError(422, "INVALID_PRICE", "정산 가격이 올바르지 않아요")
+    canceled = cancel_all_for_asset(db, asset_id, None, "DELISTED")
+    autos = db.execute(select(AutoOrder).where(AutoOrder.asset_id == asset_id, AutoOrder.status == "active")).scalars().all()
+    for a in autos:
+        a.status = "canceled"
+    mm = get_market_maker(db)
+    holders = db.execute(select(Position).where(Position.asset_id == asset_id, Position.user_id != mm.id,
+                                                Position.quantity > 0).with_for_update()).scalars().all()
+    mm_pos = db.get(Position, (mm.id, asset_id))
+    total = sum(p.quantity for p in holders) * price
+    if total:
+        # The market maker buys every share back at the settlement price, funded by the system,
+        # so each payout is an ordinary fee-free trade in the books.
+        post_entry(db, lock_account(db, mm.id), entry_type="system_funding", amount=total, transaction_id=uuid.uuid4(),
+                   reference_type="delisting", reference_id=asset_id, actor_id=actor_id,
+                   memo=f"{asset.symbol} 상장폐지 정산 자금")
+    paid_total, paid_users = 0, 0
+    for pos in holders:
+        qty, payout = pos.quantity, pos.quantity * price
+        orders = {}
+        for side, uid in (("sell", pos.user_id), ("buy", mm.id)):
+            req = OrderRequest(asset_id, side, "limit", qty, price, f"delist:{asset_id}:{pos.user_id}:{side}")
+            o = Order(user_id=uid, asset_id=asset_id, side=side, order_type="limit", quantity=qty, remaining_quantity=0,
+                      limit_price=price, reserved_cash=0, fee_bps=0, status="filled",
+                      status_reason="DELISTING_SETTLEMENT", idempotency_key=req.idempotency_key,
+                      request_hash=req.digest())
+            db.add(o)
+            orders[side] = o
+        db.flush()
+        realized = Decimal(payout) - pos.average_cost * qty
+        trade = Trade(trade_uid=uuid.uuid4(), asset_id=asset_id, buy_order_id=orders["buy"].id,
+                      sell_order_id=orders["sell"].id, buyer_id=mm.id, seller_id=pos.user_id, quantity=qty,
+                      execution_price=price, buyer_fee=0, seller_fee=0, taker_side="sell",
+                      seller_realized_pnl=realized, seller_fee_waived=False, executed_at=utcnow())
+        db.add(trade)
+        db.flush()
+        post_entry(db, lock_account(db, mm.id), entry_type="trade_buy", amount=-payout, transaction_id=trade.trade_uid,
+                   reference_type="trade", reference_id=trade.id)
+        post_entry(db, lock_account(db, pos.user_id), entry_type="trade_sell", amount=payout,
+                   transaction_id=trade.trade_uid, reference_type="trade", reference_id=trade.id)
+        pos.realized_pnl += realized
+        pos.quantity, pos.reserved_quantity, pos.average_cost = 0, 0, Decimal(0)
+        mm_pos.quantity += qty
+        paid_total += payout
+        paid_users += 1
+        notify(db, pos.user_id, "asset_delisted", f"{asset.symbol} 상장폐지",
+               f"보유하신 {qty}주가 주당 {price:,} 크레딧으로 정산되어 {payout:,} 크레딧이 입금되었어요. 사유: {reason}",
+               "/portfolio")
+    mm_pos.reserved_quantity = 0
+    asset.trading_status = "halted"
+    asset.halt_reason = f"DELISTED — {reason}"[:200]
+    asset.version += 1
+    channel.listing_status = "delisted"
+    write_audit(db, "asset.delist", actor_id=actor_id, target_type="asset", target_id=asset_id, request_id=request_id,
+                metadata={"reason": reason, "settlement_price": price, "holders_paid": paid_users,
+                          "credits_paid": paid_total, "orders_canceled": canceled, "auto_orders_canceled": len(autos)})
+    db.flush()
+    return {"asset_id": asset_id, "symbol": asset.symbol, "settlement_price": price, "holders_paid": paid_users,
+            "credits_paid": paid_total, "orders_canceled": canceled}
 
 
 def resume(db: Session, asset_id: int, reason: str, actor_id: int | None, request_id: str | None = None) -> MarketAsset:
