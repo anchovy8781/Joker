@@ -15,6 +15,8 @@ type Status = {
   last_jobs: Record<string, JobInfo>;
   last_reconciliation: { status: string; at: string } | null;
   fee_bps: number;
+  market_activity?: { running: boolean; ticks_last_minute: number; orders_last_minute: number; avg_tick_seconds: number | null;
+    last_error: string | null; last_error_at: number | null; trades_last_5m: number };
   disclaimer: string;
 };
 
@@ -36,6 +38,18 @@ export default function StatusPage() {
             <Card title="오래된 데이터 채널"><p>{data.stale_channels > 0 ? `⚠ ${data.stale_channels}개` : "● 없음"}</p></Card>
             <Card title="거래 정지 종목"><p>{data.halted_assets > 0 ? `⏸ ${data.halted_assets}개` : "● 없음"}</p></Card>
           </div>
+          {data.market_activity && (
+            <Card title="시세 엔진 (가상 투자자)">
+              <p className="text-sm">
+                {data.market_activity.running ? "● 작동 중" : "○ 이 서버에서는 꺼져 있음"} · 최근 1분 틱 <b>{data.market_activity.ticks_last_minute}</b>회
+                · 봇 주문 <b>{data.market_activity.orders_last_minute}</b>건 · 틱 평균 <b>{data.market_activity.avg_tick_seconds ?? "—"}</b>초
+                · 최근 5분 체결 <b>{data.market_activity.trades_last_5m}</b>건
+              </p>
+              {data.market_activity.last_error && (
+                <p className="mt-1 text-xs text-up">마지막 오류: {data.market_activity.last_error}</p>
+              )}
+            </Card>
+          )}
           <Card title="데이터 출처">
             <p className="text-sm">실제 데이터(YouTube API) 종목 <b>{data.data_sources.youtube_api}</b>개 · 데모 데이터 종목 <b>{data.data_sources.demo}</b>개</p>
           </Card>

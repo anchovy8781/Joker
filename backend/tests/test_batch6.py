@@ -200,3 +200,15 @@ def test_price_heartbeat_ticks_every_call(db, asset):
     assert orders >= 9
     assert len(set(prices)) > 2
     assert reconciliation.reconcile(db).status == "ok"
+
+
+def test_chart_patterns_are_loose_and_can_fail(asset, db):
+    """Patterns are drawn differently every time and a share of them break off early."""
+    t = datetime.now(UTC)
+    drawings = {tuple(bots._jittered(bots.CHART_PATTERNS["double_top"])) for _ in range(20)}
+    assert len(drawings) == 20
+    moods = [bots._new_mood(10_000, t, 1.0) for _ in range(400)]
+    patterns = [m for m in moods if m["pattern"]]
+    assert patterns and any(m["pattern"] is None for m in moods)
+    assert any(m["break_at"] < 1 for m in patterns) and any(m["break_at"] > 1 for m in patterns)
+    assert len({round(m["adherence"], 3) for m in patterns}) > 10

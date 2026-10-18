@@ -22,6 +22,20 @@ _stop = threading.Event()
 
 _last_persona_round = 0.0
 
+# Live numbers for the status page: is the simulator running here, how long ticks take and
+# how many bot orders went through in the last minute.
+stats: dict = {"running": False, "ticks": [], "last_error": None, "last_error_at": None}
+
+
+def snapshot() -> dict:
+    now = time.time()
+    recent = [t for t in stats["ticks"] if now - t[0] <= 60]
+    took = [t[1] for t in recent]
+    return {"running": stats["running"], "ticks_last_minute": len(recent),
+            "orders_last_minute": sum(t[2] for t in recent),
+            "avg_tick_seconds": round(sum(took) / len(took), 2) if took else None,
+            "last_error": stats["last_error"], "last_error_at": stats["last_error_at"]}
+
 
 def _round() -> None:
     """Every few seconds: the price heartbeat. Every bot_persona_interval_seconds: a full
@@ -31,6 +45,7 @@ def _round() -> None:
     from app.services import bots, runtime_settings
 
     db = session_factory()()
+    started = time.monotonic()
     try:
         runtime_settings.refresh(db)
         if not get_settings().bots_enabled:  # switched off by an administrator
@@ -41,10 +56,13 @@ def _round() -> None:
         else:
             out = bots.tape_tick(db, fastpath.watched_assets())
         db.commit()
+        stats["ticks"] = [t for t in stats["ticks"] if time.time() - t[0] <= 120] + [
+            (time.time(), time.monotonic() - started, int(out.get("orders", 0)))]
         if out.get("orders"):
             log.debug("bot round %s", out)
-    except Exception:
+    except Exception as exc:
         db.rollback()
+        stats["last_error"], stats["last_error_at"] = f"{type(exc).__name__}: {str(exc)[:160]}", time.time()
         log.exception("bot round failed")
     finally:
         db.close()
@@ -59,6 +77,7 @@ def _loop() -> None:
                     _stop.wait(30)  # another process runs the simulator
                     continue
                 lock_conn.commit()
+                stats["running"] = True
                 log.info("market simulator running every %.1fs", get_settings().bot_interval_seconds)
                 while not _stop.is_set():
                     started, cpu = time.monotonic(), time.thread_time()

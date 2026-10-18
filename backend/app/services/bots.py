@@ -146,37 +146,138 @@ def whale_phase(asset_id: int, now: datetime) -> tuple[str | None, float]:
     return ("accumulate" if frac < c["turn"] else "distribute"), c["strength"]
 
 
-# Per-asset market mood for the price heartbeat: a trend regime that changes at random
-# moments, volatility that clusters (calm spells, then bursts) and occasional block trades.
+# Chart patterns seen again and again on coin and stock charts. Each is a path of
+# (time fraction, level) keypoints; level 1.0 = one "amplitude" above the start price.
+# The tape steers toward the path (plus noise), so the shapes emerge from real trades.
+CHART_PATTERNS: dict[str, list[tuple[float, float]]] = {
+    "double_top": [(0, 0), (0.22, 1.0), (0.38, 0.5), (0.58, 0.97), (0.78, 0.35), (1, -0.35)],          # 쌍봉
+    "double_bottom": [(0, 0), (0.22, -1.0), (0.38, -0.5), (0.58, -0.97), (0.78, -0.3), (1, 0.4)],      # 쌍바닥
+    "head_shoulders": [(0, 0), (0.14, 0.6), (0.26, 0.3), (0.44, 1.0), (0.6, 0.3), (0.74, 0.62),
+                       (0.88, 0.22), (1, -0.4)],                                                        # 헤드앤숄더
+    "inverse_head_shoulders": [(0, 0), (0.14, -0.6), (0.26, -0.3), (0.44, -1.0), (0.6, -0.3),
+                               (0.74, -0.62), (0.88, -0.2), (1, 0.45)],                                 # 역헤드앤숄더
+    "cup_handle": [(0, 0), (0.3, -0.65), (0.55, -0.05), (0.66, -0.25), (0.8, -0.1), (1, 0.55)],        # 컵앤핸들
+    "bull_flag": [(0, 0), (0.18, 0.9), (0.32, 0.72), (0.45, 0.82), (0.58, 0.64), (0.7, 0.74),
+                  (1, 1.5)],                                                                            # 상승 깃발
+    "bear_flag": [(0, 0), (0.18, -0.9), (0.32, -0.72), (0.45, -0.82), (0.58, -0.64), (0.7, -0.74),
+                  (1, -1.5)],                                                                           # 하락 깃발
+    "ascending_triangle": [(0, 0), (0.14, 0.6), (0.27, 0.15), (0.42, 0.6), (0.55, 0.32), (0.68, 0.6),
+                           (0.78, 0.47), (1, 1.2)],                                                     # 상승 삼각형 돌파
+    "descending_triangle": [(0, 0), (0.14, -0.6), (0.27, -0.15), (0.42, -0.6), (0.55, -0.32),
+                            (0.68, -0.6), (0.78, -0.47), (1, -1.2)],                                    # 하락 삼각형 이탈
+    "pump_dump": [(0, 0), (0.12, 0.3), (0.3, 1.7), (0.38, 1.45), (0.46, 1.6), (0.62, 0.3), (1, -0.15)], # 펌프앤덤프
+    "v_reversal": [(0, 0), (0.42, -1.0), (0.5, -0.9), (1, 0.25)],                                       # V자 반등
+    "bull_trap": [(0, 0), (0.4, 0.45), (0.55, 0.85), (0.68, 0.1), (1, -0.55)],                          # 불트랩
+    "bear_trap": [(0, 0), (0.4, -0.45), (0.55, -0.85), (0.68, -0.1), (1, 0.55)],                        # 베어트랩
+    "range_chop": [(0, 0), (0.17, 0.4), (0.33, -0.35), (0.5, 0.42), (0.67, -0.38), (0.83, 0.35), (1, 0)],  # 박스권
+    "staircase_up": [(0, 0), (0.2, 0.45), (0.3, 0.38), (0.5, 0.85), (0.6, 0.76), (0.8, 1.25), (1, 1.2)],  # 계단식 상승
+    "staircase_down": [(0, 0), (0.2, -0.45), (0.3, -0.38), (0.5, -0.85), (0.6, -0.76), (0.8, -1.25),
+                       (1, -1.2)],                                                                      # 계단식 하락
+}
+
+# Per-asset market mood for the price heartbeat. Often a chart pattern is loosely playing out
+# (kind, size, tempo, how closely it is followed and whether it completes are all random and
+# never shown to players); otherwise a plain random-trend regime. Volatility clusters and
+# rare news shocks sit on top of either, so no pattern can be read off in advance.
 _moods: dict[int, dict] = {}
 
 
-def _mood(asset_id: int, now: datetime) -> dict:
-    m = _moods.get(asset_id)
-    if m is None or now >= m["regime_end"]:
-        strong = _sysrand.random() < 0.15
-        drift = _sysrand.gauss(0, 0.26 if strong else 0.12)
-        m = {"drift": max(-0.32, min(0.32, drift)), "vol": (m or {}).get("vol", 1.0),
-             "regime_end": now + timedelta(minutes=_sysrand.expovariate(1 / 6))}
-        _moods[asset_id] = m
+def _jittered(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Same pattern, never the same drawing: nudge every turning point in time and height,
+    and sometimes resolve the other way (a breakout that fails and reverses)."""
+    out = [points[0]]
+    for t, v in points[1:-1]:
+        out.append((min(0.97, max(out[-1][0] + 0.03, t + _sysrand.uniform(-0.05, 0.05))),
+                    v * _sysrand.uniform(0.75, 1.25) + _sysrand.uniform(-0.12, 0.12)))
+    last = points[-1][1] * _sysrand.uniform(0.6, 1.4)
+    if _sysrand.random() < 0.2:
+        last = -last * _sysrand.uniform(0.3, 1.0)  # the textbook ending does not come
+    out.append((1.0, last))
+    return out
+
+
+def _new_mood(price: int, now: datetime, vol: float) -> dict:
+    base = {"start": now, "vol": vol, "progress": 0.0, "speed": 1.0, "wander": 0.0,
+            "shock": 0.0, "shock_end": now, "last": now}
+    if _sysrand.random() < 0.65:
+        name = _sysrand.choice(list(CHART_PATTERNS))
+        minutes = _sysrand.uniform(12, 70)
+        return {**base, "pattern": name, "path": _jittered(CHART_PATTERNS[name]),
+                "minutes": minutes, "end": now + timedelta(minutes=minutes * 1.6), "base": price,
+                "amp": price * _sysrand.uniform(0.02, 0.09),
+                # how closely the crowd follows the shape this time (loose ... textbook)
+                "adherence": _sysrand.uniform(0.25, 1.0),
+                # a third of patterns break down somewhere along the way
+                "break_at": _sysrand.uniform(0.35, 0.9) if _sysrand.random() < 0.33 else 2.0,
+                "drift": 0.0}
+    strong = _sysrand.random() < 0.15
+    drift = _sysrand.gauss(0, 0.26 if strong else 0.12)
+    return {**base, "pattern": None, "drift": max(-0.32, min(0.32, drift)),
+            "end": now + timedelta(minutes=_sysrand.expovariate(1 / 6))}
+
+
+def _mood(asset: MarketAsset, now: datetime) -> dict:
+    m = _moods.get(asset.id)
+    price = max(1, asset.current_price)
+    if m is None or now >= m["end"] or (m["pattern"] and m["progress"] >= min(1.0, m["break_at"])):
+        # pattern finished or broke down: start something new from wherever the price is now
+        m = _new_mood(price, now, (m or {}).get("vol", 1.0))
+        _moods[asset.id] = m
+    dt = max(0.0, (now - m["last"]).total_seconds())
+    m["last"] = now
+    if m["pattern"]:
+        # uneven tempo: legs stretch and compress, sometimes the pattern stalls for a while
+        if _sysrand.random() < 0.04:
+            m["speed"] = _sysrand.choice((0.0, 0.4, 0.8, 1.0, 1.3, 1.8))
+        m["progress"] = min(1.0, m["progress"] + m["speed"] * dt / (m["minutes"] * 60))
+        # the target itself wanders (Ornstein-Uhlenbeck), so no two runs trace the same line
+        m["wander"] += -0.08 * m["wander"] + _sysrand.gauss(0, 0.07)
     # volatility clustering: decays toward 1, jumps on random "news"
     m["vol"] = 1 + (m["vol"] - 1) * 0.93
     if _sysrand.random() < 0.03:
         m["vol"] += _sysrand.uniform(1.0, 3.5)
+    # occasional news shock: a sharp one-sided burst for 20 seconds to 2 minutes
+    if now >= m["shock_end"]:
+        m["shock"] = 0.0
+        if _sysrand.random() < 0.012:
+            m["shock"] = _sysrand.choice((-1, 1)) * _sysrand.uniform(0.2, 0.4)
+            m["shock_end"] = now + timedelta(seconds=_sysrand.uniform(20, 120))
+            m["vol"] += _sysrand.uniform(1.0, 2.5)
     return m
 
 
+def _path_at(m: dict) -> tuple[float, float]:
+    """Pattern target price at the current progress and the path's steepness there."""
+    f = m["progress"]
+    pts = m["path"]
+    for (t0, v0), (t1, v1) in zip(pts, pts[1:]):
+        if f <= t1:
+            k = (f - t0) / (t1 - t0) if t1 > t0 else 1.0
+            level, slope = v0 + (v1 - v0) * k, (v1 - v0) / max(0.01, t1 - t0)
+            return m["base"] + m["amp"] * (level + m["wander"]), slope
+    return m["base"] + m["amp"] * (pts[-1][1] + m["wander"]), 0.0
+
+
 def tape_orders(asset: MarketAsset, fair: int, rng: random.Random, now: datetime) -> list[tuple[str, float]]:
-    """This tick's retail orders on one asset: (side, value). Direction mixes the current trend
-    regime, short-term herding and only a faint pull toward fair value; sizes are heavy-tailed."""
-    m = _mood(asset.id, now)
+    """This tick's retail orders on one asset: (side, value). During a pattern the flow leans
+    toward its (wandering, unevenly paced, possibly failing) path — more trades on steep legs,
+    like breakout volume; otherwise a random trend regime. News shocks override both for a
+    moment. Fair value only nudges; sizes are heavy-tailed."""
+    m = _mood(asset, now)
     price = max(1, asset.current_price)
     gap = (fair - price) / price
-    n = 1 + sum(rng.random() < min(0.6, 0.12 * m["vol"]) for _ in range(2))  # bursts when volatile
+    if m["pattern"] is not None:
+        target, slope = _path_at(m)
+        lean = max(-0.38, min(0.38, (target - price) / max(1.0, m["amp"]) * 0.6 * m["adherence"]))
+        busy = 0.10 + 0.05 * min(4.0, abs(slope) * m["speed"])
+    else:
+        lean, busy = m["drift"], 0.12
+    lean += m["shock"]
+    n = 1 + sum(rng.random() < min(0.65, busy * m["vol"]) for _ in range(2))  # bursts when volatile
     out = []
     for _ in range(n):
-        p_buy = 0.5 + m["drift"] + max(-0.06, min(0.06, gap * 3)) + rng.gauss(0, 0.08)
-        side = "buy" if rng.random() < max(0.08, min(0.92, p_buy)) else "sell"
+        p_buy = 0.5 + lean + max(-0.04, min(0.04, gap * 2)) + rng.gauss(0, 0.1)
+        side = "buy" if rng.random() < max(0.06, min(0.94, p_buy)) else "sell"
         value = get_settings().mm_level_value * rng.lognormvariate(-0.25, 0.9) * m["vol"] ** 0.5
         if rng.random() < 0.025:  # block trade
             value *= rng.uniform(3, 8)
@@ -354,7 +455,7 @@ def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: ran
                 db.refresh(asset)
         if traded:
             # Ladder has mm_levels per side: re-centre only after a few steps of drift.
-            _maybe_requote(db, asset, now, True, True, steps=1)
+            _maybe_requote(db, asset, now, True, True, steps=3)
     db.commit()
     return {"orders": orders, "assets": len(pick)}
 

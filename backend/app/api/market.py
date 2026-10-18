@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.api.serialize import activity_24h, asset_out, sparklines
-from app.services import live
+from app.services import live, simulator
 from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError
@@ -403,6 +403,11 @@ def system_status(db: Session = Depends(get_db)):
         "last_jobs": {t: last_job(t) for t in ("collect_data", "price_update", "reconcile", "risk_scan", "mm_requote")},
         "last_reconciliation": None if recon is None else {"status": recon.status, "at": recon.created_at},
         "fee_bps": s.fee_bps,
+        "market_activity": {
+            **simulator.snapshot(),
+            "trades_last_5m": db.execute(select(func.count(Trade.id)).where(
+                Trade.executed_at >= now - timedelta(minutes=5))).scalar_one(),
+        },
         "disclaimer": "All prices are virtual game prices. They do not represent the monetary "
                       "value or future performance of any real YouTube channel.",
     }

@@ -47,12 +47,22 @@ function trend(values: number[]): { a: number; b: number; pctPerBar: number } | 
 
 /** Candles with pinch / wheel / ± zoom and drag to scroll back in time. While the view is
  *  at the right edge it follows new candles; scrolled back it stays where it is. */
-export function CandleChart({ bars: all, interval, profile, show }: {
+export function CandleChart({ bars: raw, interval, profile, show }: {
   bars: Bar[];
   interval: string;
   profile?: VolumeProfile | null;
   show: { ma: boolean; trend: boolean; profile: boolean };
 }) {
+  // Intraday candles open where the previous one closed, so a minute with a single trade
+  // reads as a move from the last price instead of a lone dash floating at its own level.
+  const all = useMemo(() => {
+    if (!/s$|m$|h$/.test(interval)) return raw;
+    return raw.map((b, i) => {
+      if (i === 0) return b;
+      const open = raw[i - 1].close_price;
+      return { ...b, open_price: open, high_price: Math.max(b.high_price, open), low_price: Math.min(b.low_price, open) };
+    });
+  }, [raw, interval]);
   const [hover, setHover] = useState<number | null>(null);
   const [visible, setVisible] = useState(DEFAULT_VISIBLE);
   const [offset, setOffset] = useState(0); // candles hidden on the right (0 = live edge)
