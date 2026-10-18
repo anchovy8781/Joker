@@ -12,9 +12,9 @@ import { useApi } from "@/lib/hooks";
 
 function Section({ title, children, right }: { title: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <section className="rounded-2xl bg-panel p-4">
+    <section className="rounded-3xl bg-panel p-5">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-base font-bold">{title}</h2>
+        <h2 className="text-lg font-bold">{title}</h2>
         {right}
       </div>
       {children}
@@ -24,7 +24,7 @@ function Section({ title, children, right }: { title: string; children: React.Re
 
 function MoverCard({ a }: { a: Asset }) {
   return (
-    <Link href={`/assets/${a.id}`} className="w-44 shrink-0 snap-start rounded-2xl bg-panel p-3 sm:w-52">
+    <Link href={`/assets/${a.id}`} className="w-44 shrink-0 snap-start rounded-3xl bg-panel p-4 sm:w-52">
       <ChannelAvatar src={a.channel.thumbnail_url} title={a.channel.title} seed={a.symbol} size={64} />
       <div className="mt-3 truncate text-base font-bold">{channelName(a)}</div>
       <div className="truncate font-mono text-sm text-muted">{a.symbol}</div>
@@ -57,21 +57,22 @@ export default function Home() {
       )}
 
       {user && a ? (
-        <Link href="/portfolio" className="flex items-center justify-between rounded-2xl bg-panel px-5 py-4">
-          <div>
-            <div className="text-sm text-muted">내 총자산</div>
-            <div className="text-2xl font-bold tabular-nums">₩{credits(a.total_equity)}</div>
+        <Link href="/portfolio" className="block rounded-3xl bg-panel p-5">
+          <div className="flex items-center justify-between text-sm text-muted">
+            <span>내 총자산</span><span aria-hidden>›</span>
           </div>
-          <div className="text-right text-sm">
-            <div className="text-muted">주문 가능 ₩{credits(a.available_cash)}</div>
-            <div>평가손익 <PnL value={a.unrealized_pnl} /></div>
+          <div className="mt-1 text-[28px] font-bold leading-tight tabular-nums">{credits(a.total_equity)}원</div>
+          <div className="mt-1 text-sm">평가손익 <PnL value={a.unrealized_pnl} /></div>
+          <div className="mt-4 flex items-center justify-between rounded-2xl bg-panel2 px-4 py-3 text-sm">
+            <span className="text-muted">주문 가능 금액</span>
+            <b className="tabular-nums">{credits(a.available_cash)}원</b>
           </div>
         </Link>
       ) : !user ? (
-        <div className="rounded-2xl bg-panel p-5">
-          <h1 className="text-xl font-bold">유튜브 채널을 주식처럼 사고팔아요</h1>
+        <div className="rounded-3xl bg-panel p-5">
+          <h1 className="text-2xl font-bold leading-snug">유튜브 채널을<br />주식처럼 사고팔아요</h1>
           <p className="mt-1 text-sm text-muted">가입하면 가상 크레딧 1,000,000을 무료로 드려요. 미션으로 더 모을 수 있어요. (현금 가치 없음)</p>
-          <Link href="/register" className="btn-primary mt-4 inline-block px-5 py-2.5">무료로 시작하기</Link>
+          <Link href="/register" className="btn-primary mt-5 block py-3.5 text-center text-base">무료로 시작하기</Link>
         </div>
       ) : null}
       <ErrorBox error={assets.error} />
@@ -127,7 +128,7 @@ export default function Home() {
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-bold tabular-nums">₩{credits(x.current_price)}</div>
-                    <Link href={`/assets/${x.id}`} className="mt-1 inline-block rounded-full bg-text px-3 py-1 text-xs font-bold text-bg">사러가기</Link>
+                    <Link href={`/assets/${x.id}`} className="mt-1 inline-block rounded-lg bg-primary/15 px-3 py-1.5 text-xs font-bold text-primary">사러가기</Link>
                   </div>
                 </li>
               ))}

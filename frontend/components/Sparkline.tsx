@@ -10,7 +10,7 @@ export function Sparkline({ points, width = 120, height = 36, className = "" }: 
   const y = (v: number) => 2 + (1 - (v - min) / span) * (height - 4);
   const d = points.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   const up = points[points.length - 1] >= points[0];
-  const color = up ? "#f04452" : "#3d8bfd";
+  const color = up ? "#f04452" : "#3182f6";
   const id = `sp${points.length}${Math.round(points[0])}${Math.round(points[points.length - 1])}`;
   return (
     <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className={className} aria-hidden>

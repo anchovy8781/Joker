@@ -60,10 +60,10 @@ export default function AssetsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">주식</h1>
-        <Link href="/listings" className="rounded-full bg-text px-4 py-2 text-sm font-bold text-bg">⊕ 상장하러 가기</Link>
+        <Link href="/listings" className="btn-primary">+ 상장하러 가기</Link>
       </div>
 
-      <div className="grid grid-cols-2 rounded-2xl bg-panel p-5">
+      <div className="grid grid-cols-2 rounded-3xl bg-panel p-5">
         <div className="border-r border-line pr-4">
           <div className="text-sm text-muted">상장된 종목</div>
           <div className="mt-1 text-2xl font-bold">{all.data ? `${all.data.length}개` : "—"}</div>
@@ -89,7 +89,7 @@ export default function AssetsPage() {
         ))}
       </div>
 
-      <details className="rounded-2xl bg-panel px-5 py-4">
+      <details className="rounded-3xl bg-panel px-5 py-4">
         <summary className="cursor-pointer text-base font-bold">시세는 이렇게 움직여요</summary>
         <ul className="mt-3 space-y-2 text-sm text-muted">
           <li>📈 실제 유튜브 지표(구독자·조회수 증가 속도, 좋아요 반응)가 매일의 기준 가격을 움직여요.</li>

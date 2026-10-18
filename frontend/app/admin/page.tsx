@@ -91,7 +91,7 @@ function Listing() {
         {!data ? <Empty>불러오는 중…</Empty> : pending.length === 0 ? <Card><Empty>새 상장 요청이 없어요</Empty></Card> : (
           <ul className="space-y-2">
             {pending.map((c) => (
-              <li key={c.id} className="rounded-2xl bg-panel p-3">
+              <li key={c.id} className="rounded-3xl bg-panel p-4">
                 <div className="flex items-center gap-3">
                   <ChannelAvatar src={c.thumbnail_url} title={c.title} seed={c.youtube_channel_id} size={48} className="shrink-0 rounded-full" />
                   <div className="min-w-0 flex-1">
@@ -115,7 +115,7 @@ function Listing() {
         )}
       </section>
 
-      <details className="rounded-2xl bg-panel p-3">
+      <details className="rounded-3xl bg-panel p-4">
         <summary className="cursor-pointer font-bold">상장된 종목 {listed.length}개 · 거래 켜기/끄기</summary>
         <ul className="mt-2 divide-y divide-line">
           {listed.map((c) => c.asset && (
@@ -136,7 +136,7 @@ function Listing() {
         </ul>
       </details>
 
-      <details className="rounded-2xl bg-panel p-3">
+      <details className="rounded-3xl bg-panel p-4">
         <summary className="cursor-pointer font-bold">채널 직접 상장하기</summary>
         <div className="mt-3">
           <ChannelPicker key={pickKey} onPicked={setPreview} />
@@ -177,7 +177,7 @@ function SettingsTab() {
     <div className="space-y-2">
       {msg && <p role="alert" className="text-sm">{msg}</p>}
       {data.map((r) => (
-        <div key={r.key} className="rounded-2xl bg-panel p-4">
+        <div key={r.key} className="rounded-3xl bg-panel p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="font-bold">{r.label}</div>

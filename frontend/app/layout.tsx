@@ -11,12 +11,17 @@ export const metadata: Metadata = {
   description: "유튜브 채널을 가상 종목으로 거래하는 게임. 모든 거래는 현금 가치가 없는 게임 크레딧으로만 이루어집니다.",
 };
 export const viewport: Viewport = {
-  themeColor: "#0b0e13", width: "device-width", initialScale: 1, viewportFit: "cover",
+  themeColor: "#17171c", width: "device-width", initialScale: 1, viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko">
+      <head>
+        {/* Pretendard (SIL OFL, free) — clean Korean UI type. Falls back to system fonts. */}
+        <link rel="stylesheet" crossOrigin="anonymous"
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+      </head>
       <body className="min-h-screen">
         <AuthProvider>
           <Nav />

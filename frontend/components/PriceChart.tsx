@@ -29,7 +29,7 @@ export function PriceChart({ bars, height = 240 }: { bars: Bar[]; height?: numbe
   }, [bars, H]);
 
   if (!geo) return <div className="flex h-40 items-center justify-center text-sm text-muted">가격 기록이 아직 없습니다</div>;
-  const color = geo.up ? "#f04452" : "#3d8bfd";
+  const color = geo.up ? "#f04452" : "#3182f6";
   const hb = hover !== null ? bars[hover] : null;
 
   return (
@@ -55,8 +55,8 @@ export function PriceChart({ bars, height = 240 }: { bars: Bar[]; height?: numbe
         </defs>
         {geo.ticks.map((t) => (
           <g key={t}>
-            <line x1={pad.l} x2={W - pad.r} y1={geo.y(t)} y2={geo.y(t)} stroke="#2a2d35" strokeDasharray="3 4" />
-            <text x={W - pad.r + 6} y={geo.y(t) + 4} fill="#8e94a3" fontSize="11" fontFamily="monospace">{credits(t)}</text>
+            <line x1={pad.l} x2={W - pad.r} y1={geo.y(t)} y2={geo.y(t)} stroke="#2c2c35" strokeDasharray="3 4" />
+            <text x={W - pad.r + 6} y={geo.y(t) + 4} fill="#8b95a1" fontSize="11" fontFamily="monospace">{credits(t)}</text>
           </g>
         ))}
         <path d={geo.area} fill="url(#fill)" />
@@ -64,7 +64,7 @@ export function PriceChart({ bars, height = 240 }: { bars: Bar[]; height?: numbe
         {bars.length === 1 && <circle cx={geo.x(0)} cy={geo.y(bars[0].close_price)} r="5" fill={color} />}
         {hover !== null && (
           <>
-            <line x1={geo.x(hover)} x2={geo.x(hover)} y1={pad.t} y2={H - pad.b} stroke="#8e94a3" strokeWidth="1" />
+            <line x1={geo.x(hover)} x2={geo.x(hover)} y1={pad.t} y2={H - pad.b} stroke="#8b95a1" strokeWidth="1" />
             <circle cx={geo.x(hover)} cy={geo.y(bars[hover].close_price)} r="4" fill={color} />
           </>
         )}

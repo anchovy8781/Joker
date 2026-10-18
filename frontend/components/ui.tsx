@@ -5,14 +5,14 @@ import { direction, pct, signed, timeAgo } from "@/lib/format";
 
 export function Card({ title, right, children, className = "", id }: { title?: ReactNode; right?: ReactNode; children: ReactNode; className?: string; id?: string }) {
   return (
-    <section id={id} className={`min-w-0 rounded-2xl bg-panel ${className}`}>
+    <section id={id} className={`min-w-0 rounded-3xl bg-panel ${className}`}>
       {(title || right) && (
-        <header className="flex items-center justify-between gap-2 px-4 pb-1 pt-4">
-          <h2 className="text-base font-bold text-text">{title}</h2>
+        <header className="flex items-center justify-between gap-2 px-5 pb-1 pt-5">
+          <h2 className="text-lg font-bold text-text">{title}</h2>
           {right}
         </header>
       )}
-      <div className="p-4">{children}</div>
+      <div className="p-5">{children}</div>
     </section>
   );
 }
@@ -81,9 +81,9 @@ export function TradingBadge({ status, reason }: { status: string; reason?: stri
 
 export function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="rounded-2xl bg-panel p-4">
-      <div className="text-xs text-muted">{label}</div>
-      <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-text">{value}</div>
+    <div className="rounded-3xl bg-panel p-5">
+      <div className="text-sm text-muted">{label}</div>
+      <div className="mt-1 font-mono text-xl font-bold tabular-nums text-text">{value}</div>
       {sub && <div className="mt-1 text-xs">{sub}</div>}
     </div>
   );

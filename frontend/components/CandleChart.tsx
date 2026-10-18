@@ -13,7 +13,7 @@ export type VolumeProfile = {
 
 // Validated (dark surface, CVD-safe) — rises/falls keep the market's red/blue.
 const UP = "#f04452";
-const DOWN = "#3d8bfd";
+const DOWN = "#3182f6";
 const MA = [
   { n: 5, color: "#b88a14" },
   { n: 20, color: "#8b6fe0" },
@@ -123,8 +123,8 @@ export function CandleChart({ bars, interval, profile, show }: {
         {/* grid + price axis */}
         {g.ticks.map((t) => (
           <g key={t}>
-            <line x1={pad.l} x2={W - pad.r} y1={g.y(t)} y2={g.y(t)} stroke="#2a2d35" strokeWidth="1" />
-            <text x={W - pad.r + 8} y={g.y(t) + 4} fill="#8e94a3" fontSize="12">{credits(t)}</text>
+            <line x1={pad.l} x2={W - pad.r} y1={g.y(t)} y2={g.y(t)} stroke="#2c2c35" strokeWidth="1" />
+            <text x={W - pad.r + 8} y={g.y(t) + 4} fill="#8b95a1" fontSize="12">{credits(t)}</text>
           </g>
         ))}
 
@@ -169,27 +169,27 @@ export function CandleChart({ bars, interval, profile, show }: {
         {/* trend line (least squares over the visible candles) */}
         {show.trend && g.t && (
           <line x1={g.x(0)} y1={g.y(g.t.a)} x2={g.x(bars.length - 1)} y2={g.y(g.t.a + g.t.b * (bars.length - 1))}
-            stroke="#eceef3" strokeWidth="1.6" strokeDasharray="6 5" opacity="0.8" />
+            stroke="#f2f4f6" strokeWidth="1.6" strokeDasharray="6 5" opacity="0.8" />
         )}
 
         {/* last price tag */}
-        <line x1={pad.l} x2={W - pad.r} y1={g.y(last)} y2={g.y(last)} stroke="#eceef3" strokeDasharray="2 4" opacity="0.5" />
+        <line x1={pad.l} x2={W - pad.r} y1={g.y(last)} y2={g.y(last)} stroke="#f2f4f6" strokeDasharray="2 4" opacity="0.5" />
         <rect x={W - pad.r + 2} y={g.y(last) - 10} width={pad.r - 4} height="20" rx="10" fill={bars.length > 1 && last >= bars[0].open_price ? UP : DOWN} />
         <text x={W - pad.r / 2} y={g.y(last) + 4} fill="#fff" fontSize="12" fontWeight="700" textAnchor="middle">{compact(last)}</text>
 
         {/* x axis */}
-        <line x1={pad.l} x2={W - pad.r} y1={VOL_TOP - 6} y2={VOL_TOP - 6} stroke="#2a2d35" />
-        <text x={W - pad.r + 8} y={VOL_TOP + 12} fill="#8e94a3" fontSize="11">거래량</text>
+        <line x1={pad.l} x2={W - pad.r} y1={VOL_TOP - 6} y2={VOL_TOP - 6} stroke="#2c2c35" />
+        <text x={W - pad.r + 8} y={VOL_TOP + 12} fill="#8b95a1" fontSize="11">거래량</text>
         {xTicks.map((i) => (
-          <text key={i} x={g.x(i)} y={H - 4} fill="#8e94a3" fontSize="12"
+          <text key={i} x={g.x(i)} y={H - 4} fill="#8b95a1" fontSize="12"
             textAnchor={i === 0 ? "start" : i === bars.length - 1 ? "end" : "middle"}>{fmt(bars[i].timestamp)}</text>
         ))}
 
         {/* crosshair */}
         {hover !== null && (
           <g pointerEvents="none">
-            <line x1={g.x(hover)} x2={g.x(hover)} y1={0} y2={VOL_TOP + VOL_H} stroke="#8e94a3" strokeWidth="1" />
-            <circle cx={g.x(hover)} cy={g.y(bars[hover].close_price)} r="4.5" fill={up ? UP : DOWN} stroke="#17181d" strokeWidth="2" />
+            <line x1={g.x(hover)} x2={g.x(hover)} y1={0} y2={VOL_TOP + VOL_H} stroke="#8b95a1" strokeWidth="1" />
+            <circle cx={g.x(hover)} cy={g.y(bars[hover].close_price)} r="4.5" fill={up ? UP : DOWN} stroke="#202027" strokeWidth="2" />
           </g>
         )}
       </svg>

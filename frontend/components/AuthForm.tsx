@@ -33,29 +33,29 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <div className="mx-auto max-w-sm">
-      <h1 className="mb-1 text-xl font-bold">{isRegister ? "회원가입" : "로그인"}</h1>
+    <div className="mx-auto max-w-sm pt-4">
+      <h1 className="mb-2 text-2xl font-bold leading-snug">{isRegister ? <>가입하고<br />1,000,000 크레딧 받기</> : <>아이디와 비밀번호를<br />입력해 주세요</>}</h1>
       {isRegister && (
-        <p className="mb-4 text-sm text-muted">
+        <p className="mb-6 text-sm text-muted">
           가입 시 1회에 한해 게임 크레딧 1,000,000이 지급됩니다. 크레딧은 현금 가치가 없으며 구매·환전할 수 없습니다.
         </p>
       )}
-      <form onSubmit={submit} className="space-y-3 rounded-xl border border-line bg-panel p-4">
-        <label className="block text-xs text-muted">아이디
-          <input className="input mt-1" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} name="username" />
+      <form onSubmit={submit} className="space-y-4">
+        <label className="block text-sm font-semibold text-muted">아이디
+          <input className="input mt-1.5" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} name="username" />
         </label>
-        <label className="block text-xs text-muted">비밀번호
-          <input className="input mt-1" type="password" autoComplete={isRegister ? "new-password" : "current-password"}
+        <label className="block text-sm font-semibold text-muted">비밀번호
+          <input className="input mt-1.5" type="password" autoComplete={isRegister ? "new-password" : "current-password"}
             value={password} onChange={(e) => setPassword(e.target.value)} name="password" />
         </label>
-        {error && <div role="alert" className="text-sm text-red-300">⚠ {error}</div>}
-        <button type="submit" className="btn-primary w-full py-2" disabled={pending}>
+        {error && <div role="alert" className="text-sm text-up">⚠ {error}</div>}
+        <button type="submit" className="btn-primary w-full py-4 text-base" disabled={pending}>
           {pending ? "처리 중…" : isRegister ? "가입하기" : "로그인"}
         </button>
       </form>
-      <p className="mt-3 text-center text-sm text-muted">
-        {isRegister ? <>이미 계정이 있나요? <Link className="text-text underline" href="/login">로그인</Link></>
-          : <>처음이신가요? <Link className="text-text underline" href="/register">회원가입</Link></>}
+      <p className="mt-5 text-center text-sm text-muted">
+        {isRegister ? <>이미 계정이 있나요? <Link className="font-semibold text-primary" href="/login">로그인</Link></>
+          : <>처음이신가요? <Link className="font-semibold text-primary" href="/register">회원가입</Link></>}
       </p>
     </div>
   );

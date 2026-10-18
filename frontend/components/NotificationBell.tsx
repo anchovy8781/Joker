@@ -37,17 +37,17 @@ export function NotificationBell() {
 
   return (
     <div className="sm:relative" ref={ref}>
-      <button className="relative shrink-0 rounded-full border border-line px-3 py-1.5 text-sm hover:bg-panel2"
+      <button className="relative shrink-0 rounded-xl px-2.5 py-1.5 text-lg hover:bg-panel2"
         onClick={() => setOpen(!open)} aria-label={`알림 ${unread}개 읽지 않음`} aria-expanded={open}>
         🔔
         {unread > 0 && (
-          <span className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-red-600 px-1 text-center text-[11px] font-bold leading-[18px] text-white">
+          <span className="absolute -right-0.5 -top-0.5 min-w-[18px] rounded-full bg-red-600 px-1 text-center text-[11px] font-bold leading-[18px] text-white">
             {unread > 99 ? "99+" : unread}
           </span>
         )}
       </button>
       {open && (
-        <div role="dialog" aria-label="알림" className="absolute inset-x-2 top-full z-30 mt-1 rounded-xl border border-line bg-panel shadow-2xl sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[360px]">
+        <div role="dialog" aria-label="알림" className="absolute inset-x-2 top-full z-30 mt-1 rounded-2xl bg-panel2 shadow-2xl ring-1 ring-white/5 sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[360px]">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
             <span className="text-sm font-semibold">알림</span>
             <button className="text-xs text-muted hover:text-text" onClick={markAll} disabled={unread === 0}>모두 읽음</button>

@@ -33,7 +33,7 @@ export function Nav() {
 
   return (
     <>
-      <nav className="sticky top-0 z-20 border-b border-line bg-bg/95 pt-[env(safe-area-inset-top)] backdrop-blur">
+      <nav className="sticky top-0 z-20 bg-bg/95 pt-[env(safe-area-inset-top)] backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center gap-2 px-3 py-2 sm:px-4">
           <Link href="/" className="flex shrink-0 items-center gap-1.5 font-bold text-text">
             <span className="rounded bg-red-600 px-1.5 py-0.5 text-xs text-white" aria-hidden>▶</span>
@@ -44,7 +44,7 @@ export function Nav() {
           <div className="ml-2 hidden flex-1 items-center gap-1 lg:flex">
             {[...TABS, ...extra].map((l) => (
               <Link key={l.href} href={l.href}
-                className={`rounded-full px-2.5 py-1.5 text-sm ${active(l.href) ? "bg-panel2 text-text" : "text-muted hover:text-text"}`}>
+                className={`rounded-xl px-3 py-2 text-[15px] font-semibold ${active(l.href) ? "text-text" : "text-muted hover:text-text"}`}>
                 {l.label}
               </Link>
             ))}
@@ -57,24 +57,24 @@ export function Nav() {
               </>
             ) : (
               <>
-                <Link href="/login" className="btn-ghost px-3">로그인</Link>
+                <Link href="/login" className="rounded-xl px-2 py-2 text-sm font-semibold text-muted hover:text-text">로그인</Link>
                 <Link href="/register" className="btn-primary px-3">가입</Link>
               </>
             )}
-            <button className="shrink-0 rounded-full border border-line px-3 py-1.5 text-sm lg:hidden" onClick={() => setMore(true)}
+            <button className="shrink-0 rounded-xl px-2.5 py-1.5 text-lg text-muted lg:hidden" onClick={() => setMore(true)}
               aria-label="더보기 메뉴" aria-expanded={more}>☰</button>
           </div>
         </div>
       </nav>
 
       {/* Bottom tab bar (mobile) */}
-      <nav aria-label="주요 메뉴" className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+      <nav aria-label="주요 메뉴" className="fixed inset-x-0 bottom-0 z-20 rounded-t-3xl border-t border-white/5 bg-panel/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
         <div className="grid grid-cols-5">
           {TABS.map((t) => (
             <Link key={t.href} href={t.href}
-              className={`flex flex-col items-center gap-0.5 py-2 text-xs ${active(t.href) ? "text-text" : "text-muted"}`}
+              className={`flex flex-col items-center gap-1 pb-2 pt-2.5 text-[11px] font-semibold ${active(t.href) ? "text-text" : "text-muted"}`}
               aria-current={active(t.href) ? "page" : undefined}>
-              <span className="text-lg leading-none" aria-hidden>{t.icon}</span>
+              <span className={`text-xl leading-none ${active(t.href) ? "" : "opacity-50 grayscale"}`} aria-hidden>{t.icon}</span>
               {t.label}
             </Link>
           ))}
@@ -85,12 +85,12 @@ export function Nav() {
       {more && (
         <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-label="더보기">
           <button className="absolute inset-0 bg-black/60" aria-label="닫기" onClick={() => setMore(false)} />
-          <div className="absolute inset-x-0 bottom-0 rounded-t-2xl border-t border-line bg-panel p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+          <div className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-panel p-5 pb-[calc(1rem+env(safe-area-inset-bottom))]">
             <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-line" />
             <div className="grid grid-cols-3 gap-2">
               {extra.map((l) => (
                 <Link key={l.href} href={l.href} onClick={() => setMore(false)}
-                  className="flex flex-col items-center gap-1 rounded-xl bg-panel2 py-3 text-sm">
+                  className="flex flex-col items-center gap-1.5 rounded-2xl bg-panel2 py-4 text-sm font-semibold">
                   <span className="text-xl" aria-hidden>{l.icon}</span>{l.label}
                 </Link>
               ))}

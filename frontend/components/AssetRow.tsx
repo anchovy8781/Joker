@@ -15,7 +15,7 @@ export function AssetRow({ a, rank, fav, onFav, right }: {
   a: Asset; rank?: number; fav?: boolean; onFav?: (id: number) => void; right?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-2xl bg-panel px-4 py-3">
+    <div className="flex items-center gap-3 rounded-3xl bg-panel px-4 py-3">
       {rank !== undefined && <span className="w-5 text-center text-lg font-bold italic text-muted">{rank}</span>}
       <Link href={`/assets/${a.id}`} className="flex min-w-0 flex-1 items-center gap-3">
         <ChannelAvatar src={a.channel.thumbnail_url} title={a.channel.title} seed={a.symbol} size={52} />

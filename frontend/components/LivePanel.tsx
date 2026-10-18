@@ -82,7 +82,7 @@ function LiveChart({ points, ticks, up }: { points: { t: number; p: number }[]; 
   const x = (t: number) => pad + ((t - t0) / Math.max(1, t1 - t0)) * (W - 2 * pad);
   const y = (p: number) => pad + (1 - (p - min) / (max - min)) * (H - VOL - 2 * pad);
   const d = points.map((q, i) => `${i ? "L" : "M"}${x(q.t).toFixed(1)},${y(q.p).toFixed(1)}`).join(" ");
-  const color = up ? "#f04452" : "#3d8bfd";
+  const color = up ? "#f04452" : "#3182f6";
   const inRange = ticks.filter((k) => Date.parse(k.t) >= t0);
   const maxQty = Math.max(1, ...inRange.map((k) => k.qty));
   return (
@@ -98,12 +98,12 @@ function LiveChart({ points, ticks, up }: { points: { t: number; p: number }[]; 
       <circle cx={x(t1)} cy={y(prices[prices.length - 1])} r="5" fill={color}>
         <animate attributeName="r" values="4;7;4" dur="2s" repeatCount="indefinite" />
       </circle>
-      <text x={W - pad} y={y(max) + 12} textAnchor="end" fill="#8e94a3" fontSize="12">{credits(max)}</text>
-      <text x={W - pad} y={y(min) - 4} textAnchor="end" fill="#8e94a3" fontSize="12">{credits(min)}</text>
+      <text x={W - pad} y={y(max) + 12} textAnchor="end" fill="#8b95a1" fontSize="12">{credits(max)}</text>
+      <text x={W - pad} y={y(min) - 4} textAnchor="end" fill="#8b95a1" fontSize="12">{credits(min)}</text>
       {inRange.map((k, i) => {
         const h = Math.max(2, (k.qty / maxQty) * (VOL - 8));
         return <rect key={i} x={x(Date.parse(k.t)) - 2} y={H - h} width="4" height={h} rx="1"
-          fill={k.side === "buy" ? "#f04452" : "#3d8bfd"} opacity="0.85" />;
+          fill={k.side === "buy" ? "#f04452" : "#3182f6"} opacity="0.85" />;
       })}
     </svg>
   );
@@ -133,12 +133,12 @@ export function LivePanel({ assetId }: { assetId: number }) {
   const yt = L?.youtube;
   const viewsSpark = useMemo(() => (yt?.samples ?? []).map((s) => s.views), [yt?.samples]);
   const subsSpark = useMemo(() => (yt?.samples ?? []).filter((s) => s.subs !== null).map((s) => s.subs as number), [yt?.samples]);
-  if (!L) return <div className="rounded-2xl bg-panel p-6 text-center text-sm text-muted">{live.error ? "실시간 데이터를 불러오지 못했어요" : "실시간 연결 중…"}</div>;
+  if (!L) return <div className="rounded-3xl bg-panel p-6 text-center text-sm text-muted">{live.error ? "실시간 데이터를 불러오지 못했어요" : "실시간 연결 중…"}</div>;
 
   const g = L.game;
   const buyPct = g.m5.buy_ratio === null ? null : Math.round(g.m5.buy_ratio * 100);
   return (
-    <section className="space-y-3 rounded-2xl bg-panel p-4" aria-live="off">
+    <section className="space-y-3 rounded-3xl bg-panel p-5" aria-live="off">
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-base font-bold">
           <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-up opacity-60" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-up" /></span>
