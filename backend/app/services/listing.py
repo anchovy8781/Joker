@@ -12,12 +12,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.errors import AppError
-from app.models import Account, Channel, ChannelMetric, MarketAsset, Position, User
+from app.models import Account, Channel, ChannelMetric, MarketAsset, Order, Position, User
 from app.security import utcnow
 from app.services import bars, market_hours
 from app.services.audit import write_audit
@@ -298,19 +298,61 @@ def fund_market_maker(db: Session, mm: User | None = None) -> int:
     return amount
 
 
+def _bulk_cancel_mm(db: Session, asset_id: int, mm_id: int, reason: str) -> int:
+    """Cancel the market maker's resting orders on one asset in a few statements (instead of
+    one round trip per order) and release what they reserved. Caller holds the asset lock."""
+    db.flush()
+    row = db.execute(text(
+        "WITH c AS (SELECT id, side, reserved_cash, remaining_quantity FROM orders "
+        "           WHERE asset_id = :a AND user_id = :u AND status IN ('open', 'partially_filled', 'scheduled') "
+        "           FOR UPDATE), "
+        "u AS (UPDATE orders o SET status = 'canceled', status_reason = :r, updated_at = now(), "
+        "      reserved_cash = CASE WHEN o.side = 'buy' THEN 0 ELSE o.reserved_cash END "
+        "      FROM c WHERE o.id = c.id) "
+        "SELECT count(*), coalesce(sum(reserved_cash) FILTER (WHERE side = 'buy'), 0), "
+        "       coalesce(sum(remaining_quantity) FILTER (WHERE side = 'sell'), 0) FROM c"),
+        {"a": asset_id, "u": mm_id, "r": reason}).one()
+    n, cash, shares = int(row[0]), int(row[1]), int(row[2])
+    if cash:
+        db.execute(text("UPDATE accounts SET reserved_cash = reserved_cash - :c WHERE user_id = :u"),
+                   {"c": cash, "u": mm_id})
+    if shares:
+        db.execute(text("UPDATE positions SET reserved_quantity = reserved_quantity - :q "
+                        "WHERE user_id = :u AND asset_id = :a"), {"q": shares, "u": mm_id, "a": asset_id})
+    if n:
+        # Rows changed behind the ORM's back: drop cached copies so later reads are fresh.
+        for obj in list(db.identity_map.values()):
+            if isinstance(obj, (Order, Account, Position)):
+                db.expire(obj)
+    return n
+
+
+def _resting(mm_id: int, req: OrderRequest, fee_bps: int, reserved_cash: int) -> Order:
+    return Order(user_id=mm_id, asset_id=req.asset_id, side=req.side, order_type="limit", quantity=req.quantity,
+                 remaining_quantity=req.quantity, limit_price=req.limit_price, fee_bps=fee_bps, protect_price=None,
+                 idempotency_key=req.idempotency_key, request_hash=req.digest(), reserved_cash=reserved_cash,
+                 status="open")
+
+
 def requote_market_maker(db: Session, asset_id: int) -> dict:
     """Replace the market maker's quotes on one asset with a ladder of small orders around a
     centre that follows the last traded price (70%) and the intraday fair value (30%), so
-    real volume walks the price while fundamentals keep pulling it back."""
+    real volume walks the price while fundamentals keep pulling it back.
+
+    Every database statement is a network round trip, so the ladder is replaced in bulk:
+    one statement cancels the old quotes, one inserts the new ones. Only a level that would
+    cross someone else's resting order goes through the matching engine."""
     from app.services import intraday  # live data → quote centre (see intraday.py)
+    from app.services.fees import fee_policy
     from app.services.orders import price_band
 
     s = get_settings()
     mm = get_market_maker(db)
     asset = lock_asset(db, asset_id)
-    canceled = cancel_all_for_asset(db, asset_id, mm.id, "MM_REQUOTE")
+    canceled = _bulk_cancel_mm(db, asset_id, mm.id, "MM_REQUOTE")
     placed = 0
-    if asset.trading_status != "active" or not market_hours.is_open(utcnow()):
+    now = utcnow()
+    if asset.trading_status != "active" or not market_hours.is_open(now):
         return {"canceled": canceled, "placed": 0}
     intraday.update(db, asset, mm.id)
     fair = intraday.fair_price(asset)
@@ -320,26 +362,51 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
     lo, hi = max(s.min_price, bps_down(asset.reference_price, band)), bps_up(asset.reference_price, band)
     centre = min(max(centre, lo), hi)
     fund_market_maker(db, mm)
+    account = lock_account(db, mm.id)
     pos = db.get(Position, (mm.id, asset_id))
     inventory = (pos.quantity - pos.reserved_quantity) if pos else 0
-    account = db.get(Account, mm.id)
     n_assets = max(1, db.query(MarketAsset).count())
     cash_budget = (account.cash_balance - account.reserved_cash) // n_assets
+    best_bid, best_ask = db.execute(text(
+        "SELECT max(limit_price) FILTER (WHERE side = 'buy'), min(limit_price) FILTER (WHERE side = 'sell') "
+        "FROM orders WHERE asset_id = :a AND user_id <> :u AND status IN ('open', 'partially_filled')"),
+        {"a": asset_id, "u": mm.id}).one()
+    fee_bps = fee_policy(asset, now).bps
+    rows: list[Order] = []
+    crossing: list[OrderRequest] = []
     for k in range(s.mm_levels):
         offset = s.mm_half_spread_bps + k * s.mm_step_bps
         size_value = s.mm_level_value * (2 + k) // 2  # deeper levels hold a little more
         ask = bps_up(centre, offset)
         if inventory > 0 and ask <= hi:
             qty = min(inventory, max(1, size_value // ask), s.max_order_quantity)
-            r = place_order(db, mm, OrderRequest(asset_id, "sell", "limit", qty, ask, f"mm:{uuid.uuid4().hex}"))
-            if r.order.status in ("open", "partially_filled", "filled"):
-                inventory -= qty
-                placed += 1
+            inventory -= qty
+            req = OrderRequest(asset_id, "sell", "limit", qty, ask, f"mm:{uuid.uuid4().hex}")
+            if best_bid is not None and ask <= best_bid:
+                crossing.append(req)
+            else:
+                rows.append(_resting(mm.id, req, fee_bps, 0))
         bid = bps_down(centre, offset)
         if bid >= lo:
             qty = min(max(1, size_value // bid), s.max_order_quantity)
-            if buy_reservation(qty, bid) <= cash_budget:
-                place_order(db, mm, OrderRequest(asset_id, "buy", "limit", qty, bid, f"mm:{uuid.uuid4().hex}"))
-                cash_budget -= buy_reservation(qty, bid)
-                placed += 1
+            cost = buy_reservation(qty, bid, fee_bps)
+            if cost <= cash_budget:
+                cash_budget -= cost
+                req = OrderRequest(asset_id, "buy", "limit", qty, bid, f"mm:{uuid.uuid4().hex}")
+                if best_ask is not None and bid >= best_ask:
+                    crossing.append(req)
+                else:
+                    rows.append(_resting(mm.id, req, fee_bps, cost))
+    if rows:
+        db.add_all(rows)
+        account.reserved_cash += sum(o.reserved_cash for o in rows)
+        sells = sum(o.quantity for o in rows if o.side == "sell")
+        if sells:
+            pos.reserved_quantity += sells
+        db.flush()
+        placed += len(rows)
+    for req in crossing:  # would trade with a resting order: let the matching engine fill it
+        r = place_order(db, mm, req)
+        if r.order.status in ("open", "partially_filled", "filled"):
+            placed += 1
     return {"canceled": canceled, "placed": placed, "centre": centre}
