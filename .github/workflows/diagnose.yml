@@ -1,0 +1,19 @@
+# Manual health probe of the deployed server from GitHub's runners (read-only GETs).
+name: Diagnose server
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe public endpoints
+        run: |
+          BASE=https://youtube-exchange-q5e4.onrender.com
+          for i in 1 2 3; do
+            for p in /healthz /api/ping /api/market/hours /api/assets /api/system/status; do
+              out=$(curl -sS -m 60 -o /tmp/body -w "%{http_code} %{time_total}s" "$BASE$p" 2>&1) || true
+              echo "[$i] $p -> $out"
+              head -c 600 /tmp/body 2>/dev/null; echo
+            done
+            sleep 20
+          done
