@@ -233,3 +233,10 @@ def test_fast_tape_fill_keeps_the_books_exact(db, asset):
                       {"a": asset}).scalar_one()
     assert bars >= 1
     assert reconciliation.reconcile(db).status == "ok"
+    # 24h activity from minute bars matches the trades themselves
+    from app.api.serialize import activity_24h
+
+    vol, n, turnover = db.execute(text(
+        "SELECT sum(quantity), count(*), sum(quantity * execution_price) FROM trades "
+        "WHERE asset_id = :a AND executed_at >= date_trunc('minute', now() - interval '24 hours')"), {"a": asset}).one()
+    assert activity_24h(db, [asset])[asset] == (int(vol), int(n), int(turnover))

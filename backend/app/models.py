@@ -323,6 +323,8 @@ class MarketBar(Base):
     low_price: Mapped[int] = mapped_column(BigInteger, nullable=False)
     close_price: Mapped[int] = mapped_column(BigInteger, nullable=False)
     volume: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    turnover: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    trade_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
 
 class ChannelSample(Base):

@@ -388,7 +388,10 @@ def _fast_fill(db: Session, bot: User, asset: MarketAsset, side: str, qty: int, 
 
     from app.services.fees import fee_policy
 
+    from app import fastpath
+
     s = get_settings()
+    fastpath.wait_for_players()  # people's orders first
     db.flush()
     price = db.execute(text(
         "SELECT ytx_tape_fill(:a, :b, :side, :q, :fee, :base, :key, :levels)"),
@@ -427,7 +430,8 @@ def _maybe_requote(db: Session, asset: MarketAsset, now: datetime, traded: bool,
                    steps: int = 1) -> None:
     """Re-centre the market maker only where the price drifted a full ladder step away from
     the last centre (or every few minutes) — requotes are the expensive part of a round."""
-    stale = asset.intraday_updated_at is None or now - asset.intraday_updated_at > timedelta(minutes=3)
+    # fair value moves slowly: refresh an untouched ladder every 10 minutes, not every 3
+    stale = asset.intraday_updated_at is None or now - asset.intraday_updated_at > timedelta(minutes=10)
     last_centre = _centres.get(asset.id)
     drifted = last_centre is None or abs(asset.current_price - last_centre) * 10_000 > steps * get_settings().mm_step_bps * last_centre
     if stale or (traded and drifted):
@@ -514,11 +518,20 @@ def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: ran
     cash = {a.user_id: a.cash_balance - a.reserved_cash
             for a in db.execute(select(Account).where(Account.user_id.in_(ids))).scalars()}
     orders = 0
-    # watched assets lead, and get a second turn halfway through a long rotation
-    schedule = watched + turn[: len(turn) // 2] + (watched if len(turn) >= 6 else []) + turn[len(turn) // 2:]
-    for a in schedule:
-        orders += _tape_asset(db, a, retail, rng, now, held, cash, max_orders=3 if a in watched else 2)
-    return {"orders": orders, "assets": len(watched) + len(turn)}
+    # Watched assets always trade; the others share a time budget so a tick stays short however
+    # many assets are listed — whoever does not fit continues next tick (the cursor only moves
+    # past assets that actually traded).
+    deadline = time.monotonic() + get_settings().bot_tape_budget_seconds
+    for a in watched:
+        orders += _tape_asset(db, a, retail, rng, now, held, cash, max_orders=3)
+    served = 0
+    for a in turn:
+        if time.monotonic() > deadline:
+            break
+        orders += _tape_asset(db, a, retail, rng, now, held, cash, max_orders=2)
+        served += 1
+    _tape_cursor = (_tape_cursor - k + served) % max(1, len(others))
+    return {"orders": orders, "assets": len(watched) + served}
 
 
 def run_round(db: Session, now: datetime | None = None, rng: random.Random | None = None,

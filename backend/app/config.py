@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     bot_persona_interval_seconds: float = 600.0  # whales / value investors / momentum decide every 10 min
     bot_max_orders_per_round: int = 12
     bot_tape_rotation: int = 50  # unwatched assets traded per heartbeat tick, in turn (50 = all)
+    bot_tape_budget_seconds: float = 2.5  # unwatched assets share this much time per tick; the rest go next tick
     bot_round_budget_seconds: float = 4.0  # stop placing bot orders after this much wall time
 
     # Listing requests: open daily from this hour (KST) until midnight, global daily cap.

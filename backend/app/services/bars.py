@@ -8,13 +8,15 @@ from sqlalchemy.orm import Session
 _UPSERT = text(
     """
     INSERT INTO market_bars (asset_id, interval, timestamp, open_price, high_price, low_price,
-                             close_price, volume)
-    VALUES (:a, :i, :t, :p, :p, :p, :p, :v)
+                             close_price, volume, turnover, trade_count)
+    VALUES (:a, :i, :t, :p, :p, :p, :p, :v, :v * :p, CASE WHEN :v > 0 THEN 1 ELSE 0 END)
     ON CONFLICT (asset_id, interval, timestamp) DO UPDATE SET
         high_price = GREATEST(market_bars.high_price, EXCLUDED.high_price),
         low_price = LEAST(market_bars.low_price, EXCLUDED.low_price),
         close_price = EXCLUDED.close_price,
-        volume = market_bars.volume + EXCLUDED.volume
+        volume = market_bars.volume + EXCLUDED.volume,
+        turnover = market_bars.turnover + EXCLUDED.turnover,
+        trade_count = market_bars.trade_count + EXCLUDED.trade_count
     """
 )
 
@@ -30,14 +32,16 @@ def bucket(ts: datetime, interval: str) -> datetime:
 _UPSERT3 = text(
     """
     INSERT INTO market_bars (asset_id, interval, timestamp, open_price, high_price, low_price,
-                             close_price, volume)
-    VALUES (:a, '1m', :t1, :p, :p, :p, :p, :v), (:a, '1h', :t2, :p, :p, :p, :p, :v),
-           (:a, '1d', :t3, :p, :p, :p, :p, :v)
+                             close_price, volume, turnover, trade_count)
+    VALUES (:a, '1m', :t1, :p, :p, :p, :p, :v, :n, 1), (:a, '1h', :t2, :p, :p, :p, :p, :v, :n, 1),
+           (:a, '1d', :t3, :p, :p, :p, :p, :v, :n, 1)
     ON CONFLICT (asset_id, interval, timestamp) DO UPDATE SET
         high_price = GREATEST(market_bars.high_price, EXCLUDED.high_price),
         low_price = LEAST(market_bars.low_price, EXCLUDED.low_price),
         close_price = EXCLUDED.close_price,
-        volume = market_bars.volume + EXCLUDED.volume
+        volume = market_bars.volume + EXCLUDED.volume,
+        turnover = market_bars.turnover + EXCLUDED.turnover,
+        trade_count = market_bars.trade_count + EXCLUDED.trade_count
     """
 )
 
@@ -45,7 +49,7 @@ _UPSERT3 = text(
 def record_trade_bar(db: Session, asset_id: int, price: int, quantity: int, ts: datetime) -> None:
     # one round trip for the minute, hour and day bars
     db.execute(_UPSERT3, {"a": asset_id, "t1": bucket(ts, "1m"), "t2": bucket(ts, "1h"), "t3": bucket(ts, "1d"),
-                          "p": price, "v": quantity})
+                          "p": price, "v": quantity, "n": price * quantity})
 
 
 def record_reference_bar(db: Session, asset_id: int, price: int, ts: datetime) -> None:

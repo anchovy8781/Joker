@@ -24,15 +24,16 @@ def freshness(channel: Channel) -> FreshnessOut:
 
 
 def activity_24h(db: Session, asset_ids: list[int]) -> dict[int, tuple[int, int, int]]:
-    """asset_id -> (volume, trade count, turnover) over the last 24h."""
+    """asset_id -> (volume, trade count, turnover) over the last 24h, summed from minute bars
+    (at most 1,440 rows per asset) instead of every trade."""
     if not asset_ids:
         return {}
-    since = utcnow() - timedelta(hours=24)
+    since = (utcnow() - timedelta(hours=24)).replace(second=0, microsecond=0)
     rows = db.execute(
-        select(Trade.asset_id, func.coalesce(func.sum(Trade.quantity), 0), func.count(Trade.id),
-               func.coalesce(func.sum(Trade.quantity * Trade.execution_price), 0))
-        .where(Trade.asset_id.in_(asset_ids), Trade.executed_at >= since)
-        .group_by(Trade.asset_id)
+        select(MarketBar.asset_id, func.coalesce(func.sum(MarketBar.volume), 0),
+               func.coalesce(func.sum(MarketBar.trade_count), 0), func.coalesce(func.sum(MarketBar.turnover), 0))
+        .where(MarketBar.asset_id.in_(asset_ids), MarketBar.interval == "1m", MarketBar.timestamp >= since)
+        .group_by(MarketBar.asset_id)
     ).all()
     return {a: (int(v), int(n), int(t)) for a, v, n, t in rows}
 
