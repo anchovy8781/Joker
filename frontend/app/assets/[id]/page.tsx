@@ -12,6 +12,7 @@ import { CandleChart, type VolumeProfile } from "@/components/CandleChart";
 import { ChannelAvatar } from "@/components/ChannelAvatar";
 import { LivePanel } from "@/components/LivePanel";
 import { MyOrders } from "@/components/MyOrders";
+import { InvestorFlow } from "@/components/InvestorFlow";
 import { ChannelGrowth } from "@/components/ChannelGrowth";
 import { PriceAlerts } from "@/components/PriceAlerts";
 import { Card, Change, DemoBadge, Empty, ErrorBox, FreshnessBadge, TradingBadge } from "@/components/ui";
@@ -158,6 +159,10 @@ export default function AssetPage() {
               ))}
             </div>
             <CandleChart bars={bars.data ?? []} interval={chartInterval} profile={show.profile ? profile.data : null} show={show} />
+          </Card>
+
+          <Card title="투자자별 수급" right={<span className="text-xs text-muted">최근 5일</span>}>
+            <InvestorFlow assetId={a.id} />
           </Card>
 
           <Card title="채널 공개 지표" right={<span className="text-xs text-muted">{a.is_demo ? "데모 공급자 생성값" : "YouTube Data API 공개 통계"}</span>}>

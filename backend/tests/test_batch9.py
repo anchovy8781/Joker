@@ -104,3 +104,54 @@ def test_korean_names_make_readable_symbols(make_admin, db, asset):
     assert r.status_code == 200 and r.json()["symbol"] == "BOTTA", r.text
     assert admin.post(f"/api/admin/assets/{asset}/symbol", json={"symbol": "x"}).status_code == 422
     assert admin.post(f"/api/admin/assets/{asset}/symbol", json={"symbol": "bodda2"}).json()["symbol"] == "BODDA2"
+
+
+def test_desks_trade_and_flows_are_reported(make_user, db, asset):
+    import random as _r
+    from datetime import UTC, datetime
+
+    from app.services import bots
+
+    bots.ensure_bots(db)
+    db.commit()
+    t0 = datetime.now(UTC)
+    for i in range(40):
+        bots.tape_tick(db, [asset], now=t0 + timedelta(seconds=4 * i), rng=_r.Random(i))
+    f = make_user().get(f"/api/assets/{asset}/flows").json()
+    assert f["groups"] == ["개인", "외국인", "기관", "세력"] and f["days"]
+    total = f["total"]
+    assert total["기관"]["qty"] != 0 or total["외국인"]["qty"] != 0
+    from app.services import reconciliation
+
+    assert reconciliation.reconcile(db).status == "ok"
+
+
+def test_spoof_bid_is_placed_then_withdrawn_and_shakeout_dumps(db, asset, monkeypatch):
+    from datetime import UTC, datetime
+
+    from app.models import User
+    from app.services import bots, reconciliation
+
+    bots.ensure_bots(db)
+    db.commit()
+    now = datetime.now(UTC)
+    a = db.get(MarketAsset, asset)
+    whales = db.execute(select(User).where(User.normalized_username.like("세력_%"))).scalars().all()
+    bots._campaigns[asset] = {"shape": "distribute", "start": now, "end": now + timedelta(hours=1), "strength": 1.0}
+    monkeypatch.setattr(bots._sysrand, "random", lambda: 0.0)
+    bots._spoof(db, a, whales, now)
+    sp = bots._spoofs[asset]
+    assert db.get(Order, sp["order_id"]).status == "open"
+    bots._spoof(db, a, whales, sp["end"] + timedelta(seconds=1))
+    db.expire_all()
+    assert db.get(Order, sp["order_id"]).status == "canceled" and asset not in bots._spoofs
+    # 개미털기: an accumulating whale starts a dump, then buys back
+    bots._campaigns[asset] = {"shape": "accumulate", "start": now, "end": now + timedelta(hours=1), "strength": 1.0}
+    bots._shakeouts.pop(asset, None)
+    import random as _r
+
+    bots.desk_orders(a, _r.Random(1), now)  # random() == 0 starts the dump
+    assert bots._shakeouts[asset]["stage"] == "dump"
+    sells = [o for o in bots.desk_orders(a, _r.Random(2), now + timedelta(seconds=1)) if o[0] == "whale"]
+    assert sells and all(side == "sell" for _, side, _ in sells)
+    assert reconciliation.reconcile(db).status == "ok"

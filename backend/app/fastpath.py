@@ -34,7 +34,7 @@ def memory_rate_limit(key: str, limit: int, window_seconds: int) -> tuple[bool, 
 # Public, user-independent GET endpoints → how long one response may be shared (seconds).
 _SHARED = (
     ("/api/assets/", {"live": 1.0, "orderbook": 1.0, "trades": 1.0, "history": 2.0, "volume-profile": 3.0,
-                     "growth": 30.0}),
+                     "growth": 30.0, "flows": 10.0}),
     ("/api/assets", 2.0),
     ("/api/rankings", 3.0),
     ("/api/market/summary", 3.0),

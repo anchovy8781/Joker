@@ -209,6 +209,37 @@ def orderbook(asset_id: int, depth: int = Query(default=10, ge=1, le=50), db: Se
     return OrderBookOut(asset_id=asset_id, bids=side("buy", True), asks=side("sell", False))
 
 
+@router.get("/assets/{asset_id}/flows")
+def flows(asset_id: int, days: int = Query(default=5, ge=1, le=20), db: Session = Depends(get_db)):
+    """수급: net buying (shares and credits) by investor group per Korean trading day.
+    개인 = players and retail-style traders, 기관 / 외국인 = those desks, 세력 = whale
+    campaigns; the market maker's own side is left out (it is the other side of everything)."""
+    from app.services.bots import FLOW_GROUP, PERSONAS
+
+    a, _ = _get_asset(db, asset_id)
+    kind_of = {p.username.lower(): p.kind for p in PERSONAS}
+    groups = {name: FLOW_GROUP.get(kind, "개인") for name, kind in kind_of.items()}
+    since = utcnow() - timedelta(days=days)
+    rows = db.execute(text(
+        "SELECT (t.executed_at AT TIME ZONE 'Asia/Seoul')::date AS d, u.normalized_username, u.role, "
+        "       sum(CASE WHEN t.buyer_id = u.id THEN t.quantity ELSE -t.quantity END) AS q, "
+        "       sum(CASE WHEN t.buyer_id = u.id THEN t.quantity ELSE -t.quantity END * t.execution_price) AS v "
+        "FROM trades t JOIN users u ON u.id IN (t.buyer_id, t.seller_id) "
+        "WHERE t.asset_id = :a AND t.executed_at >= :s GROUP BY 1, 2, 3"), {"a": a.id, "s": since}).all()
+    order = ["개인", "외국인", "기관", "세력"]
+    by_day: dict = {}
+    for d, name, role, q, v in rows:
+        if role == "system":
+            continue
+        g = groups.get(name, "개인") if role == "bot" else "개인"
+        day = by_day.setdefault(d.isoformat(), {k: {"qty": 0, "value": 0} for k in order})
+        day[g]["qty"] += int(q)
+        day[g]["value"] += int(v)
+    days_out = [{"date": d, **by_day[d]} for d in sorted(by_day, reverse=True)]
+    total = {k: {"qty": sum(x[k]["qty"] for x in days_out), "value": sum(x[k]["value"] for x in days_out)} for k in order}
+    return {"groups": order, "days": days_out, "total": total}
+
+
 @router.get("/assets/{asset_id}/growth")
 def growth(asset_id: int, db: Session = Depends(get_db)):
     """Subscriber and view changes over the last 1/7/28 days. Uses 5-minute live samples and

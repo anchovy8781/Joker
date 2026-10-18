@@ -68,7 +68,17 @@ PERSONAS: list[Persona] = [
     Persona("버핏형_가치투자", "buffett", 150_000_000, 0.3),
     Persona("멍거형_집중투자", "munger", 100_000_000, 0.2),
     Persona("골드만형_투자은행", "goldman", 300_000_000, 0.7),
+    # 기관 / 외국인 desks: trade on the heartbeat with their own slow-changing views
+    Persona("기관_연기금", "institution", 400_000_000, 0.3),
+    Persona("기관_자산운용", "institution", 250_000_000, 0.3),
+    Persona("기관_투신", "institution", 150_000_000, 0.3),
+    Persona("외국인_글로벌펀드", "foreign", 400_000_000, 0.3),
+    Persona("외국인_헤지펀드", "foreign", 200_000_000, 0.3),
+    Persona("외국인_패시브", "foreign", 300_000_000, 0.3),
 ]
+# Who counts as whom in the investor-flow (수급) table.
+FLOW_GROUP = {"noise": "개인", "momentum": "개인", "contrarian": "개인", "institution": "기관", "buffett": "기관",
+              "munger": "기관", "goldman": "기관", "foreign": "외국인", "whale": "세력"}
 BY_NAME = {p.username: p for p in PERSONAS}
 _centres: dict[int, int] = {}  # price at the last market-maker requote, per asset
 
@@ -329,6 +339,8 @@ def _decide(p: Persona, rng: random.Random, asset: MarketAsset, ctx: dict, held:
         if abs(gap) >= 0.006:  # arbitrage back toward fair value
             return ("sell" if gap > 0 else "buy"), rng.uniform(800_000, 3_000_000)
         return rng.choice(("buy", "sell")), rng.uniform(300_000, 1_000_000)  # two-sided flow
+    if p.kind in ("institution", "foreign"):
+        return None  # these desks trade on the heartbeat (see desk_orders)
     phase, strength = ctx["whale"]
     if phase is None:
         return (rng.choice(("buy", "sell")), rng.uniform(100_000, 500_000)) if rng.random() < 0.3 else None
@@ -442,21 +454,111 @@ def _maybe_requote(db: Session, asset: MarketAsset, now: datetime, traded: bool,
 
 
 _tape_cursor = 0
+_desks: dict[tuple[int, str], dict] = {}
+_shakeouts: dict[int, dict] = {}
+_spoofs: dict[int, dict] = {}
 
 
-def _tape_asset(db: Session, asset: MarketAsset, retail: list[User], rng: random.Random, now: datetime,
+def _desk_view(asset_id: int, kind: str, now: datetime) -> float:
+    """A desk's current view on one stock, -1 (selling) .. +1 (buying). 기관 views change
+    slowly (30-120 min), 외국인 faster (15-90 min) and lean with the market's trend."""
+    d = _desks.get((asset_id, kind))
+    if d is None or now >= d["end"]:
+        lo, hi = (30, 120) if kind == "institution" else (15, 90)
+        d = {"bias": max(-1.0, min(1.0, _sysrand.gauss(0, 0.55))), "end": now + timedelta(minutes=_sysrand.uniform(lo, hi))}
+        _desks[(asset_id, kind)] = d
+    bias = d["bias"]
+    if kind == "foreign":
+        m = _moods.get(asset_id)
+        if m is not None:
+            bias = 0.6 * bias + 0.4 * max(-1.0, min(1.0, m.get("drift", 0.0) * 4))
+    return bias
+
+
+def desk_orders(asset: MarketAsset, rng: random.Random, now: datetime) -> list[tuple[str, str, float]]:
+    """This tick's (kind, side, value) from 기관, 외국인 and 세력. Whales accumulate or
+    distribute per their campaign, and sometimes 개미털기: a sudden dump that scares retail
+    out (they panic-sell with it), after which the whale buys back cheaper."""
+    level = get_settings().mm_level_value
+    out: list[tuple[str, str, float]] = []
+    for kind, p_act, mu in (("institution", 0.22, 0.3), ("foreign", 0.18, 0.5)):
+        if rng.random() < p_act:
+            side = "buy" if rng.random() < 0.5 + 0.4 * _desk_view(asset.id, kind, now) else "sell"
+            out.append((kind, side, level * rng.lognormvariate(mu, 0.6)))
+    phase, strength = whale_phase(asset.id, now)
+    sh = _shakeouts.get(asset.id)
+    if sh and now < sh["end"]:
+        if sh["stage"] == "dump":
+            out += [("whale", "sell", level * rng.lognormvariate(0.9, 0.4)) for _ in range(rng.choice((1, 2)))]
+        elif rng.random() < 0.6:  # buy back the shaken-out shares
+            out.append(("whale", "buy", level * rng.lognormvariate(0.8, 0.4)))
+    elif sh and sh["stage"] == "dump":
+        _shakeouts[asset.id] = {"stage": "rebuy", "end": now + timedelta(seconds=_sysrand.uniform(40, 90))}
+    elif phase == "accumulate" and _sysrand.random() < 0.003:
+        _shakeouts[asset.id] = {"stage": "dump", "end": now + timedelta(seconds=_sysrand.uniform(20, 50))}
+        m = _moods.get(asset.id)
+        if m is not None:  # retail panics along with the dump
+            m["shock"], m["shock_end"] = -0.35, _shakeouts[asset.id]["end"]
+    elif phase is not None and rng.random() < 0.25:
+        out.append(("whale", "buy" if phase == "accumulate" else "sell", level * rng.lognormvariate(0.5, 0.5) * strength))
+    return out
+
+
+def _spoof(db: Session, asset: MarketAsset, whales: list[User], now: datetime) -> None:
+    """허매수: while distributing, a whale props up a big bid under the price to make the
+    stock look supported — and pulls it again before it can fill. Retail leans in meanwhile."""
+    from app.services.orders import cancel_order
+
+    sp = _spoofs.get(asset.id)
+    if sp and now >= sp["end"]:
+        try:
+            cancel_order(db, db.get(User, sp["user_id"]), sp["order_id"], reason="BOT_WITHDRAWN")
+            db.commit()
+        except AppError:
+            db.rollback()
+        _spoofs.pop(asset.id, None)
+        return
+    if sp or not whales or whale_phase(asset.id, now)[0] != "distribute" or _sysrand.random() > 0.012:
+        return
+    whale = _sysrand.choice(whales)
+    price = bps_down(max(1, asset.current_price), _sysrand.randint(50, 120))
+    qty = max(1, int(get_settings().mm_level_value * _sysrand.uniform(3, 6) // price))
+    try:
+        with db.begin_nested():
+            r = place_order(db, whale, OrderRequest(asset.id, "buy", "limit", qty, price, f"bot:{uuid.uuid4().hex}"))
+        db.commit()
+    except AppError:
+        db.rollback()
+        return
+    if r.order.status in ("open", "partially_filled"):
+        end = now + timedelta(seconds=_sysrand.uniform(20, 60))
+        _spoofs[asset.id] = {"order_id": r.order.id, "user_id": whale.id, "end": end}
+        m = _moods.get(asset.id)
+        if m is not None:
+            m["shock"], m["shock_end"] = 0.15, end
+
+
+def _tape_asset(db: Session, asset: MarketAsset, crowd: dict[str, list[User]], rng: random.Random, now: datetime,
                 held: dict[tuple[int, int], int], cash: dict[int, int], max_orders: int = 3) -> int:
-    """This tick's retail orders on one asset; returns how many went through. `held` and
-    `cash` are this tick's snapshot of the retail bots' free shares and cash (read once per
-    tick, then adjusted locally) so an order costs one database call, not several."""
+    """This tick's orders on one asset — retail flow plus 기관/외국인/세력 desks; returns how
+    many went through. `held` and `cash` are this tick's snapshot of the bots' free shares
+    and cash (read once per tick, then adjusted locally) so an order costs one database call."""
     orders = 0
+    _spoof(db, asset, crowd.get("whale", []), now)
     price = max(1, asset.current_price)
-    for side, value in tape_orders(asset, intraday.fair_price(asset), rng, now)[:max_orders]:
+    flow = [("noise", side, value) for side, value in tape_orders(asset, intraday.fair_price(asset), rng, now)[:max_orders]]
+    flow += desk_orders(asset, rng, now)
+    for kind, side, value in flow:
+        group = crowd.get(kind) or []
+        if not group:
+            continue
         # A sell comes from someone who actually holds shares, so selling pressure is real.
-        sellers = [b for b in retail if held.get((b.id, asset.id), 0) > 0]
+        sellers = [b for b in group if held.get((b.id, asset.id), 0) > 0]
         if side == "sell" and not sellers:
+            if kind == "whale":
+                continue  # nothing to dump yet
             side = "buy"
-        bot = rng.choice(sellers) if side == "sell" else rng.choice(retail)
+        bot = rng.choice(sellers) if side == "sell" else rng.choice(group)
         if side == "sell":
             qty = min(held[(bot.id, asset.id)], max(1, int(value // price)))
         else:
@@ -514,11 +616,14 @@ def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: ran
     k = min(len(others), max(1, get_settings().bot_tape_rotation))
     turn = [others[(_tape_cursor + j) % len(others)] for j in range(k)] if others else []
     _tape_cursor = (_tape_cursor + k) % max(1, len(others))
-    retail = db.execute(select(User).where(User.normalized_username.in_(
-        [p.username.lower() for p in PERSONAS if p.kind == "noise"]))).scalars().all()
-    if not retail:
+    kinds = ("noise", "institution", "foreign", "whale")
+    crowd: dict[str, list[User]] = {k: [] for k in kinds}
+    for u in db.execute(select(User).where(User.normalized_username.in_(
+            [p.username.lower() for p in PERSONAS if p.kind in kinds]))).scalars():
+        crowd[BY_NAME[u.username].kind].append(u)
+    if not crowd["noise"]:
         return {"orders": 0}
-    ids = [b.id for b in retail]
+    ids = [b.id for group in crowd.values() for b in group]
     held = {(p.user_id, p.asset_id): p.quantity - p.reserved_quantity
             for p in db.execute(select(Position).where(Position.user_id.in_(ids))).scalars()}
     cash = {a.user_id: a.cash_balance - a.reserved_cash
@@ -529,12 +634,12 @@ def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: ran
     # past assets that actually traded).
     deadline = time.monotonic() + get_settings().bot_tape_budget_seconds
     for a in watched:
-        orders += _tape_asset(db, a, retail, rng, now, held, cash, max_orders=3)
+        orders += _tape_asset(db, a, crowd, rng, now, held, cash, max_orders=3)
     served = 0
     for a in turn:
         if time.monotonic() > deadline:
             break
-        orders += _tape_asset(db, a, retail, rng, now, held, cash, max_orders=2)
+        orders += _tape_asset(db, a, crowd, rng, now, held, cash, max_orders=2)
         served += 1
     _tape_cursor = (_tape_cursor - k + served) % max(1, len(others))
     return {"orders": orders, "assets": len(watched) + served}
