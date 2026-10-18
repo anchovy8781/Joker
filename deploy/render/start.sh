@@ -8,6 +8,13 @@ python -m app.cli bootstrap   # first admin / demo stocks from env (Render free 
 
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --log-level warning &
 API=$!
+# Open the public port only once the API answers, so health checks and early visitors are not
+# proxied to a port that is still starting (ECONNREFUSED noise in the logs).
+for _ in $(seq 1 90); do
+  python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ping', timeout=2)" 2>/dev/null && break
+  kill -0 "$API" 2>/dev/null || { echo "API exited during startup" >&2; exit 1; }
+  sleep 1
+done
 cd /app/web
 PORT="${PORT:-10000}" HOSTNAME=0.0.0.0 node server.js &
 WEB=$!
