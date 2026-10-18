@@ -59,8 +59,8 @@ class Settings(BaseSettings):
     # Market maker (IPO inventory provider). It only trades with its own inventory and cash.
     # Ladder of small quotes so that real volume moves the price.
     mm_levels: int = 6
-    mm_half_spread_bps: int = 20
-    mm_step_bps: int = 30
+    mm_half_spread_bps: int = 10  # finer ticks: price steps of ~0.1-0.15% instead of 0.2-0.3%
+    mm_step_bps: int = 15
     mm_level_value: int = 300_000  # credits per level near the touch (deeper levels a bit larger)
     mm_follow_bps: int = 9000  # quote centre = 90% last trade + 10% intraday fair value
     mm_cash_per_asset: int = 30_000_000  # system-funded bid liquidity so selling always works

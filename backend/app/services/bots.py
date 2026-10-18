@@ -278,9 +278,9 @@ def tape_orders(asset: MarketAsset, fair: int, rng: random.Random, now: datetime
     for _ in range(n):
         p_buy = 0.5 + lean + max(-0.04, min(0.04, gap * 2)) + rng.gauss(0, 0.1)
         side = "buy" if rng.random() < max(0.06, min(0.94, p_buy)) else "sell"
-        value = get_settings().mm_level_value * rng.lognormvariate(-0.25, 0.9) * m["vol"] ** 0.5
-        if rng.random() < 0.025:  # block trade
-            value *= rng.uniform(3, 8)
+        value = get_settings().mm_level_value * rng.lognormvariate(-0.5, 0.8) * m["vol"] ** 0.5
+        if rng.random() < 0.01:  # an occasional block trade
+            value *= rng.uniform(2, 4)
         out.append((side, value))
     return out
 

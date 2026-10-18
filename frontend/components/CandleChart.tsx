@@ -243,6 +243,9 @@ export function CandleChart({ bars: raw, interval, profile, show }: {
 
           {/* candles */}
           {bars.map((b, i) => {
+            // A second/minute with no trade is only a placeholder carrying the last price:
+            // leave it empty instead of drawing a dash (real exchanges show a gap there).
+            if (b.volume === 0 && b.open_price === b.close_price && b.high_price === b.low_price) return null;
             const rise = b.close_price >= b.open_price;
             const c = rise ? UP : DOWN;
             const top = g.y(Math.max(b.open_price, b.close_price));
