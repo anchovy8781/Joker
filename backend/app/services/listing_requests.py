@@ -30,7 +30,7 @@ def window_status(db: Session, now: datetime | None = None) -> dict:
     opens_at = day_start + timedelta(hours=s.listing_request_open_hour_kst)
     used = db.execute(select(func.count(Channel.id)).where(
         Channel.requested_by.is_not(None), Channel.created_at >= day_start)).scalar_one()
-    is_open = local >= opens_at
+    is_open = local >= opens_at or not s.listing_window_enabled
     return {"open": is_open, "opens_at": opens_at if not is_open else None,
             "next_opens_at": opens_at if not is_open else opens_at + timedelta(days=1),
             "closes_at": day_start + timedelta(days=1), "limit": s.listing_requests_per_day,

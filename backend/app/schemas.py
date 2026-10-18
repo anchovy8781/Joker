@@ -309,6 +309,10 @@ class ListingApproveIn(Strict):
     celebrity_new_channel: bool = False
 
 
+class SettingIn(Strict):
+    value: bool | int | float
+
+
 class QuickListIn(Strict):
     channel: str = Field(min_length=2, max_length=200)
     celebrity_new_channel: bool = False

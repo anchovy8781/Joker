@@ -28,10 +28,10 @@ def _demo_sample(demo: DemoProvider, ch: Channel, now: datetime) -> tuple[int, i
     a = demo.snapshot_for(ch.youtube_channel_id, ch.title, day)
     b = demo.snapshot_for(ch.youtube_channel_id, ch.title, day + timedelta(days=1))
     frac = (now - datetime(day.year, day.month, day.day, tzinfo=UTC)).total_seconds() / 86400
-    # Views arrive faster in the evening (KST); a gentle daily wave keeps the rate realistic.
-    shape = frac + 0.04 * math.sin(2 * math.pi * (frac - 0.3))
-    wobble = (_unit(f"{ch.youtube_channel_id}:{now.isoformat(timespec='minutes')}") - 0.5) * 0.0002
-    views = int(a.view_count + (b.view_count - a.view_count) * shape + a.view_count * wobble)
+    # Views arrive faster at some hours: a gentle wave that is 0 at both ends of the day, so the
+    # path is continuous across midnight and never runs backwards (counts only grow).
+    shape = frac + 0.03 * math.sin(2 * math.pi * frac)
+    views = int(a.view_count + (b.view_count - a.view_count) * shape)
     subs = int(a.subscriber_count + (b.subscriber_count - a.subscriber_count) * shape)
     return subs, max(views, a.view_count), a.video_count
 

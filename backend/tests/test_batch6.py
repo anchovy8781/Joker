@@ -98,7 +98,7 @@ def test_bots_are_funded_once_and_hidden_from_leaderboard(db, make_user, asset):
     seeds = db.execute(select(func.count(LedgerEntry.id)).where(LedgerEntry.reference_type == "bot_seed")).scalar_one()
     assert seeds == len(bots.PERSONAS)
     names = [r["username"] for r in make_user().get("/api/leaderboard").json()]
-    assert not any(n.startswith(("세력_", "개미_", "추세_", "역발상_")) for n in names)
+    assert not any(n.startswith(("세력_", "개미_", "추세_", "역발상_", "버핏형", "멍거형", "골드만형")) for n in names)
 
 
 def test_whale_campaigns_are_deterministic():

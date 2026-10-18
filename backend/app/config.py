@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     admin_grant: int = 100_000_000  # one-time starting balance for administrators
     # Users pay this to request a listing; refunded in full if an administrator rejects it.
     listing_fee: int = 100_000
+    listing_window_enabled: bool = True  # False: listing requests accepted around the clock
     fee_bps: int = 20  # 0.20%
     # Surcharge fee for hot assets (new video upload / newly listed celebrity channel).
     # Selling a surcharged asset at a loss pays no sell fee.

@@ -10,6 +10,12 @@ Behaviour per round (every few seconds):
   * contrarian— sell above the intraday fair value, buy below it
   * whale     — per asset and 90-minute window a deterministic "campaign": accumulate
                 (heavy buying) for the first 55%, then distribute (heavy selling)
+  * buffett   — 버핏형 value investor: buys good channels (popularity, growing audience)
+                when they trade below fair value, holds, trims only when clearly overpriced
+  * munger    — 멍거형 concentrated quality: only the top channels by popularity, buys dips,
+                rarely trades, sells only when quality fades
+  * goldman   — 골드만형 investment bank: large two-sided flow around fair value (mostly
+                limit orders), arbitrages gaps and rides whale campaigns early
 Orders are mostly market orders (they move the price) plus some limit orders near the
 touch (they add depth). Bots never trade with themselves (self-trade prevention applies).
 """
@@ -58,6 +64,10 @@ PERSONAS: list[Persona] = [
     Persona("개미_점심시간", "noise", 2_000_000, 0.3),
     Persona("개미_새벽감성", "noise", 1_500_000, 0.3),
     Persona("개미_존버", "noise", 3_000_000, 0.25),
+    # Investor archetypes (styles, not real people or firms)
+    Persona("버핏형_가치투자", "buffett", 150_000_000, 0.3),
+    Persona("멍거형_집중투자", "munger", 100_000_000, 0.2),
+    Persona("골드만형_투자은행", "goldman", 300_000_000, 0.7),
 ]
 BY_NAME = {p.username: p for p in PERSONAS}
 _centres: dict[int, int] = {}  # price at the last market-maker requote, per asset
@@ -121,9 +131,10 @@ def _ret_10m(db: Session, asset_id: int, now: datetime) -> float:
     return (closes[-1] - closes[0]) / closes[0] if len(closes) >= 2 and closes[0] else 0.0
 
 
-def _decide(p: Persona, rng: random.Random, asset: MarketAsset, ctx: dict) -> tuple[str, float] | None:
-    """(side, order value in credits) or None."""
+def _decide(p: Persona, rng: random.Random, asset: MarketAsset, ctx: dict, held: int) -> tuple[str, float] | None:
+    """(side, order value in credits) or None. `held` = shares the bot can sell now."""
     price = asset.current_price
+    gap = (price - ctx["fair"]) / ctx["fair"]  # >0: above fair value
     if p.kind == "noise":
         return rng.choice(("buy", "sell")), rng.uniform(15_000, 150_000)
     if p.kind == "momentum":
@@ -132,10 +143,31 @@ def _decide(p: Persona, rng: random.Random, asset: MarketAsset, ctx: dict) -> tu
             return None
         return ("buy" if r > 0 else "sell"), rng.uniform(80_000, 600_000) * min(3.0, abs(r) / 0.004)
     if p.kind == "contrarian":
-        gap = (price - ctx["fair"]) / ctx["fair"]
         if abs(gap) < 0.025:
             return None
         return ("sell" if gap > 0 else "buy"), rng.uniform(100_000, 700_000) * min(3.0, abs(gap) / 0.02)
+    if p.kind == "buffett":
+        quality = (asset.popularity_score or 25) >= 22 and ctx["yt_bps"] >= -50
+        if quality and gap < -0.012:  # a good business on sale
+            return "buy", rng.uniform(1_000_000, 4_000_000) * min(3.0, abs(gap) / 0.02)
+        if held and gap > 0.06:  # clearly overpriced: trim a little, keep the core
+            return "sell", min(held, max(1, held // 5)) * price
+        return None
+    if p.kind == "munger":
+        if asset.id not in ctx["top_quality"]:
+            return ("sell", held * price) if held and (asset.popularity_score or 0) < 15 else None
+        if gap <= 0.0 and rng.random() < 0.6:
+            return "buy", rng.uniform(1_500_000, 5_000_000)
+        return None
+    if p.kind == "goldman":
+        phase, _ = ctx["whale"]
+        if phase == "accumulate" and ctx["ret_10m"] > 0.001:
+            return "buy", rng.uniform(1_000_000, 4_000_000)
+        if phase == "distribute" and held:
+            return "sell", rng.uniform(1_000_000, 4_000_000)
+        if abs(gap) >= 0.006:  # arbitrage back toward fair value
+            return ("sell" if gap > 0 else "buy"), rng.uniform(800_000, 3_000_000)
+        return rng.choice(("buy", "sell")), rng.uniform(300_000, 1_000_000)  # two-sided flow
     phase, strength = ctx["whale"]
     if phase is None:
         return (rng.choice(("buy", "sell")), rng.uniform(100_000, 500_000)) if rng.random() < 0.3 else None
@@ -145,13 +177,21 @@ def _decide(p: Persona, rng: random.Random, asset: MarketAsset, ctx: dict) -> tu
     return side, rng.uniform(500_000, 3_500_000) * strength
 
 
-def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, rng: random.Random) -> bool:
+# Long-term investors never flip a sell into a buy; the bank quotes passively more often.
+NO_FLIP = {"buffett", "munger"}
+PASSIVE_P = {"goldman": 0.6}
+
+
+def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, rng: random.Random,
+           kind: str = "noise") -> bool:
     price = max(1, asset.current_price)
     qty = max(1, int(value // price))
     if side == "sell":
         pos = db.get(Position, (bot.id, asset.id))
         free = (pos.quantity - pos.reserved_quantity) if pos else 0
         if free <= 0:
+            if kind in NO_FLIP:
+                return False
             # Nothing to sell yet: build a position instead (smaller), so bots always take part.
             side, qty = "buy", max(1, qty // 2)
         else:
@@ -162,7 +202,7 @@ def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, 
         if qty <= 0:
             return False
     qty = min(qty, get_settings().max_order_quantity)
-    if rng.random() < 0.3:  # passive: a limit order just inside/at the touch adds depth
+    if rng.random() < PASSIVE_P.get(kind, 0.3):  # passive: a limit order near the touch adds depth
         bps = rng.randint(0, 40)
         limit = bps_down(price, bps) if side == "buy" else bps_up(price, bps)
         req = OrderRequest(asset.id, side, "limit", qty, limit, f"bot:{uuid.uuid4().hex}")
@@ -210,23 +250,30 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
     if not assets:
         return {"assets": 0, "orders": 0}
     _cancel_stale_bot_orders(db, [b.id for b in bots], now)
+    # 멍거형 only looks at the best few channels (highest popularity, then market cap).
+    top_quality = {a.id for a in sorted(assets, key=lambda a: (a.popularity_score or 0,
+                                                              a.current_price * a.shares_outstanding),
+                                        reverse=True)[:3]}
     rng.shuffle(assets)
     orders = 0
     touched: set[int] = set()
     for asset in assets[:8]:
         ctx = {"ret_10m": _ret_10m(db, asset.id, now), "fair": max(1, intraday.fair_price(asset)),
-               "whale": whale_phase(asset.id, now)}
+               "whale": whale_phase(asset.id, now), "top_quality": top_quality,
+               "yt_bps": (asset.intraday_detail or {}).get("yt_bps", 0)}
         for bot in rng.sample(bots, len(bots)):
             if orders >= s.bot_max_orders_per_round:
                 break
             p = BY_NAME[bot.username]
             if rng.random() > p.activity:
                 continue
-            decision = _decide(p, rng, asset, ctx)
+            pos = db.get(Position, (bot.id, asset.id))
+            held = (pos.quantity - pos.reserved_quantity) if pos else 0
+            decision = _decide(p, rng, asset, ctx, held)
             if decision is None:
                 continue
             _refill(db, bot, p, now)
-            if _order(db, bot, asset, decision[0], decision[1], rng):
+            if _order(db, bot, asset, decision[0], decision[1], rng, p.kind):
                 orders += 1
                 touched.add(asset.id)
                 db.refresh(asset)

@@ -39,16 +39,23 @@ function growth(points: MetricPoint[], key: "subscriber_count" | "view_count", d
   return ((last[key]! - base[key]!) / base[key]!) * 100;
 }
 
-type ChartInterval = "1m" | "5m" | "15m" | "1h" | "1d" | "1w" | "1mo";
-const INTERVALS: { key: ChartInterval; label: string; limit: number; poll: number }[] = [
-  { key: "1m", label: "1분", limit: 90, poll: 5_000 },
-  { key: "5m", label: "5분", limit: 90, poll: 10_000 },
-  { key: "15m", label: "15분", limit: 90, poll: 15_000 },
-  { key: "1h", label: "시간", limit: 120, poll: 30_000 },
-  { key: "1d", label: "일", limit: 120, poll: 60_000 },
-  { key: "1w", label: "주", limit: 104, poll: 60_000 },
-  { key: "1mo", label: "월", limit: 60, poll: 60_000 },
+type ChartInterval = "1s" | "5s" | "10s" | "30s" | "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "1d" | "1w" | "1mo";
+const INTERVALS: { key: ChartInterval; label: string; group: string; limit: number; poll: number }[] = [
+  { key: "1s", label: "1초", group: "초", limit: 120, poll: 2_000 },
+  { key: "5s", label: "5초", group: "초", limit: 120, poll: 2_000 },
+  { key: "10s", label: "10초", group: "초", limit: 120, poll: 3_000 },
+  { key: "30s", label: "30초", group: "초", limit: 120, poll: 5_000 },
+  { key: "1m", label: "1분", group: "분", limit: 90, poll: 5_000 },
+  { key: "3m", label: "3분", group: "분", limit: 90, poll: 10_000 },
+  { key: "5m", label: "5분", group: "분", limit: 90, poll: 10_000 },
+  { key: "15m", label: "15분", group: "분", limit: 90, poll: 15_000 },
+  { key: "30m", label: "30분", group: "분", limit: 90, poll: 30_000 },
+  { key: "1h", label: "시간", group: "시간", limit: 120, poll: 30_000 },
+  { key: "1d", label: "일", group: "일", limit: 120, poll: 60_000 },
+  { key: "1w", label: "주", group: "주", limit: 104, poll: 60_000 },
+  { key: "1mo", label: "월", group: "월", limit: 60, poll: 60_000 },
 ];
+const GROUPS = ["초", "분", "시간", "일", "주", "월"] as const;
 
 export default function AssetPage() {
   const { id } = useParams<{ id: string }>();
@@ -134,12 +141,21 @@ export default function AssetPage() {
         <div className="space-y-4">
           <LivePanel assetId={a.id} />
           <Card title="차트">
-            <div className="no-scrollbar -mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1" role="tablist" aria-label="차트 주기">
-              {INTERVALS.map((x) => (
-                <button key={x.key} role="tab" aria-selected={chartInterval === x.key} onClick={() => setChartInterval(x.key)}
-                  className={`chip px-3 py-1.5 text-xs ${chartInterval === x.key ? "chip-on" : ""}`}>{x.label}</button>
+            <div className="mb-2 flex gap-1.5" role="tablist" aria-label="차트 종류">
+              {GROUPS.map((g) => (
+                <button key={g} role="tab" aria-selected={iv.group === g}
+                  onClick={() => setChartInterval(INTERVALS.find((x) => x.group === g)!.key)}
+                  className={`chip flex-1 px-2 py-1.5 text-sm ${iv.group === g ? "chip-on" : ""}`}>{g === "초" || g === "분" ? `${g}봉` : g}</button>
               ))}
             </div>
+            {(iv.group === "초" || iv.group === "분") && (
+              <div className="mb-2 flex gap-1.5" role="tablist" aria-label={`${iv.group}봉 간격`}>
+                {INTERVALS.filter((x) => x.group === iv.group).map((x) => (
+                  <button key={x.key} role="tab" aria-selected={chartInterval === x.key} onClick={() => setChartInterval(x.key)}
+                    className={`flex-1 rounded-full border px-2 py-1 text-xs font-semibold ${chartInterval === x.key ? "border-text text-text" : "border-line text-muted"}`}>{x.label}</button>
+                ))}
+              </div>
+            )}
             <div className="mb-3 flex flex-wrap gap-1.5">
               {([["ma", "이동평균선"], ["trend", "추세선"], ["profile", "매물대"]] as const).map(([k, label]) => (
                 <button key={k} aria-pressed={show[k]} onClick={() => setShow({ ...show, [k]: !show[k] })}

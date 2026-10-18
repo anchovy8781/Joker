@@ -159,6 +159,21 @@ class YouTubeDataAPIProvider:
         items = data.get("items") or []
         return items[0]["id"] if items else None
 
+    def search_channels(self, query: str, limit: int = 8) -> list[dict]:
+        """search.list type=channel (100 quota units) — fallback only."""
+        data = self._get("search", {"part": "snippet", "type": "channel", "q": query, "maxResults": limit}, 100)
+        out = []
+        for item in data.get("items", []):
+            sn = item.get("snippet", {})
+            cid = (item.get("id") or {}).get("channelId")
+            if not cid:
+                continue
+            thumbs = sn.get("thumbnails", {})
+            out.append({"youtube_channel_id": cid, "title": sn.get("title", cid), "handle": None,
+                        "thumbnail_url": (thumbs.get("medium") or thumbs.get("default") or {}).get("url"),
+                        "subscriber_text": None})
+        return out
+
     def fetch_trending_channels(self, region: str) -> set[str]:
         data = self._get(
             "videos",
@@ -190,7 +205,10 @@ class DemoProvider:
         growth = drift * t + 0.03 * math.sin(t / 17 + phase)
         noise = (_unit(f"{channel_id}:{day.isoformat()}") - 0.5) * 0.002
         subs = max(100, int(base_subs * math.exp(growth + noise)))
-        views = max(1000, int(base_views * math.exp(growth * 1.4 + noise + 0.001 * t)))
+        # Views are cumulative, so they never fall: the pace still speeds up and slows down
+        # (x - sin x is non-decreasing), it just never goes negative.
+        pace = 0.0015 * t + 0.02 * (t / 17 - math.sin(t / 17 + phase) + math.sin(phase)) + max(0.0, drift) * t * 1.4
+        views = max(1000, int(base_views * math.exp(pace)))
         return ChannelSnapshot(
             youtube_channel_id=channel_id,
             title=title,

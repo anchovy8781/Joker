@@ -84,6 +84,7 @@ export function CandleChart({ bars, interval, profile, show }: {
     const d = new Date(iso);
     if (interval === "1mo") return d.toLocaleDateString("ko-KR", { year: "2-digit", month: "short" });
     if (interval === "1d" || interval === "1w") return d.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
+    if (interval.endsWith("s")) return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
   };
   const xTicks = bars.length <= 1 ? [0] : [0, Math.round((bars.length - 1) / 2), bars.length - 1];

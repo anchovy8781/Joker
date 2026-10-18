@@ -31,6 +31,22 @@ def _check_production_settings(s) -> None:
         raise RuntimeError("Refusing to start in production: " + "; ".join(problems))
 
 
+def _refresh_runtime_settings() -> None:
+    """Pick up administrator switches (cheap: re-read at most every few seconds)."""
+    from app.db import session_factory
+    from app.services import runtime_settings
+
+    if get_settings().env == "test":
+        return
+    db = session_factory()()
+    try:
+        runtime_settings.refresh(db)
+    except Exception:  # never fail a request because settings could not be read
+        logging.getLogger("yex").warning("could not refresh runtime settings", exc_info=True)
+    finally:
+        db.close()
+
+
 def create_app() -> FastAPI:
     s = get_settings()
     if s.is_production:
@@ -64,6 +80,8 @@ def create_app() -> FastAPI:
                 return JSONResponse(status_code=429, content={"error": {
                     "code": exc.code, "message": exc.message, "details": exc.details,
                     "request_id": request.state.request_id}})
+        if request.url.path.startswith("/api/"):
+            await run_in_threadpool(_refresh_runtime_settings)
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"

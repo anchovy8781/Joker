@@ -20,10 +20,13 @@ _stop = threading.Event()
 
 
 def _round() -> None:
-    from app.services import bots
+    from app.services import bots, runtime_settings
 
     db = session_factory()()
     try:
+        runtime_settings.refresh(db)
+        if not get_settings().bots_enabled:  # switched off by an administrator
+            return
         out = bots.run_round(db, commit_each=True)
         db.commit()
         if out.get("orders"):
@@ -36,7 +39,6 @@ def _round() -> None:
 
 
 def _loop() -> None:
-    interval = get_settings().bot_interval_seconds
     while not _stop.is_set():
         try:
             with get_engine().connect() as lock_conn:
@@ -45,11 +47,12 @@ def _loop() -> None:
                     _stop.wait(30)  # another process runs the simulator
                     continue
                 lock_conn.commit()
-                log.info("market simulator running every %.1fs", interval)
+                log.info("market simulator running every %.1fs", get_settings().bot_interval_seconds)
                 while not _stop.is_set():
                     started = time.monotonic()
                     _round()
                     took = time.monotonic() - started
+                    interval = get_settings().bot_interval_seconds
                     # Never use more than ~half the CPU: rest at least as long as the round took,
                     # so player requests stay fast on small (free-tier) instances.
                     _stop.wait(max(0.5, interval - took, took))
@@ -63,7 +66,7 @@ def _loop() -> None:
 def start() -> None:
     global _started
     s = get_settings()
-    if _started or not s.bots_enabled or s.env == "test":
+    if _started or s.env == "test":  # the loop itself honours bots_enabled (admin switch)
         return
     _started = True
     threading.Thread(target=_loop, name="market-simulator", daemon=True).start()

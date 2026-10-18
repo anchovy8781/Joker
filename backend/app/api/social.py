@@ -157,6 +157,16 @@ def my_listing_requests(user: User = Depends(require_user), db: Session = Depend
     return listing_requests.mine(db, user)
 
 
+@router.get("/channels/search")
+def channel_search(q: str = Query(min_length=1, max_length=100), user: User = Depends(require_user)):
+    """Find channels by name (or handle / URL / ID) to pick from; fills in the channel ID."""
+    from app.security import hit_rate_limit
+    from app.services import channel_lookup
+
+    hit_rate_limit(f"channel_search:user:{user.id}", 30, 60)
+    return channel_lookup.search_channels(q, get_api_provider())
+
+
 @router.get("/listing-requests/preview")
 def listing_preview(channel: str = Query(min_length=2, max_length=200), user: User = Depends(require_user),
                     db: Session = Depends(get_db)):

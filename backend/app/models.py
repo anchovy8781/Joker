@@ -718,3 +718,14 @@ class PriceAlert(Base):
     created_at: Mapped[datetime] = _now()
     triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AppSetting(Base):
+    """Administrator overrides of selected settings (see services/runtime_settings.py)."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = _now()

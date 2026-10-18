@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { ChannelPreview, type ChannelPreviewData } from "@/components/ChannelPreview";
+import { useState } from "react";
+import { ChannelPicker } from "@/components/ChannelPicker";
+import type { ChannelPreviewData } from "@/components/ChannelPreview";
 import { useAuth } from "@/components/AuthProvider";
 import { Card, Empty, LoginPrompt } from "@/components/ui";
 import { api, ApiError, type Account, type ListingRequest, type ListingWindow } from "@/lib/api";
@@ -21,29 +22,8 @@ export default function Listings() {
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [preview, setPreview] = useState<ChannelPreviewData | null>(null);
-  const [previewing, setPreviewing] = useState(false);
-  const [previewErr, setPreviewErr] = useState<string | null>(null);
+  const [pickerKey, setPickerKey] = useState(0);
 
-  // Look the channel up as the user types (debounced) so they see who they are listing.
-  useEffect(() => {
-    const ref = channel.trim();
-    setPreview(null);
-    setPreviewErr(null);
-    if (!user || ref.length < 2) return;
-    let alive = true;
-    const t = setTimeout(async () => {
-      setPreviewing(true);
-      try {
-        const p = await api<ChannelPreviewData>(`/api/listing-requests/preview?channel=${encodeURIComponent(ref)}`);
-        if (alive) setPreview(p);
-      } catch (err) {
-        if (alive) setPreviewErr(err instanceof ApiError ? err.message : "채널을 불러오지 못했어요");
-      } finally {
-        if (alive) setPreviewing(false);
-      }
-    }, 700);
-    return () => { alive = false; clearTimeout(t); };
-  }, [channel, user]);
   if (!ready) return <Empty>…</Empty>;
   if (!user) return <LoginPrompt />;
   const w = win.data;
@@ -57,7 +37,7 @@ export default function Listings() {
     try {
       await api("/api/listing-requests", { method: "POST", body: { channel, note: note || null } });
       setMsg("✓ 상장 요청이 접수되었습니다. 운영자 승인 후 상장됩니다.");
-      setChannel(""); setNote(""); setPreview(null);
+      setChannel(""); setNote(""); setPreview(null); setPickerKey((k) => k + 1);
       mine.reload(); win.reload(); account.reload();
     } catch (err) {
       setMsg(err instanceof ApiError ? `⚠ ${err.message}` : "실패");
@@ -85,13 +65,10 @@ export default function Listings() {
           )
         )}
         <form onSubmit={submit} className="space-y-3">
-          <label className="block text-xs text-muted">유튜브 채널 핸들만 입력하면 돼요 (채널 주소도 가능)
-            <input className="input mt-1 font-sans text-base" value={channel} onChange={(e) => setChannel(e.target.value)}
-              placeholder="@채널핸들" autoCapitalize="off" autoCorrect="off" />
-          </label>
-          {previewing && <p className="text-sm text-muted">🔎 채널을 찾는 중…</p>}
-          {previewErr && <p role="alert" className="text-sm text-amber-300">⚠ {previewErr}</p>}
-          {preview && <ChannelPreview p={preview} />}
+          <div className="space-y-1">
+            <span className="block text-xs text-muted">채널 이름으로 검색해서 고르면 채널 ID가 자동으로 들어가요</span>
+            <ChannelPicker key={pickerKey} onPicked={(p) => { setPreview(p); setChannel(p?.youtube_channel_id ?? ""); }} />
+          </div>
           <div className="flex items-center justify-between rounded-xl bg-panel2 px-3 py-2.5 text-sm">
             <span className="text-muted">상장 신청 비용</span>
             <span className="font-bold tabular-nums">₩{credits(fee)}</span>

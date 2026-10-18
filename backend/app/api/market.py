@@ -95,17 +95,22 @@ def asset_live(asset_id: int, db: Session = Depends(get_db)):
 # Stored intervals are read directly; the others are rolled up from a finer stored one.
 _ROLLUPS = {
     "5m": ("1m", "date_trunc('hour', timestamp) + floor(extract(minute from timestamp) / 5) * interval '5 minutes'"),
+    "3m": ("1m", "date_trunc('hour', timestamp) + floor(extract(minute from timestamp) / 3) * interval '3 minutes'"),
     "15m": ("1m", "date_trunc('hour', timestamp) + floor(extract(minute from timestamp) / 15) * interval '15 minutes'"),
+    "30m": ("1m", "date_trunc('hour', timestamp) + floor(extract(minute from timestamp) / 30) * interval '30 minutes'"),
     "1w": ("1d", "date_trunc('week', timestamp)"),
     "1mo": ("1d", "date_trunc('month', timestamp)"),
 }
 
 
 @router.get("/assets/{asset_id}/history", response_model=list[BarOut])
-def history(asset_id: int, interval: Literal["1m", "5m", "15m", "1h", "1d", "1w", "1mo"] = "1d",
+def history(asset_id: int,
+            interval: Literal["1s", "5s", "10s", "30s", "1m", "3m", "5m", "15m", "30m", "1h", "1d", "1w", "1mo"] = "1d",
             limit: int = Query(default=90, ge=1, le=1000), db: Session = Depends(get_db)):
-    """OHLCV candles: 분봉(1m/5m/15m), 시간봉, 일봉, 주봉, 월봉."""
-    _get_asset(db, asset_id)
+    """OHLCV candles: 초봉(1s/5s/10s/30s), 분봉(1m/3m/5m/15m/30m), 시간봉, 일봉, 주봉, 월봉."""
+    a, _ = _get_asset(db, asset_id)
+    if interval.endswith("s"):
+        return _second_candles(db, a, int(interval[:-1]), min(limit, 300))
     if interval in _ROLLUPS:
         base, bucket_sql = _ROLLUPS[interval]
         rows = db.execute(text(
@@ -120,6 +125,36 @@ def history(asset_id: int, interval: Literal["1m", "5m", "15m", "1h", "1d", "1w"
         .order_by(MarketBar.timestamp.desc()).limit(limit)
     ).scalars().all()
     return list(reversed(bars))
+
+
+def _second_candles(db: Session, asset: MarketAsset, seconds: int, limit: int) -> list[BarOut]:
+    """초봉 straight from executions (no stored bars). Seconds without a trade repeat the
+    previous close with zero volume so the chart stays continuous."""
+    now = utcnow()
+    end = now.replace(microsecond=0)
+    end = end - timedelta(seconds=end.second % seconds)
+    start = end - timedelta(seconds=seconds * (limit - 1))
+    rows = db.execute(text(
+        "SELECT date_bin(make_interval(secs => :n), executed_at, :origin) AS b, "
+        "(array_agg(execution_price ORDER BY executed_at, id))[1] AS o, max(execution_price) AS h, "
+        "min(execution_price) AS l, (array_agg(execution_price ORDER BY executed_at DESC, id DESC))[1] AS c, "
+        "sum(quantity) AS v FROM trades WHERE asset_id = :a AND executed_at >= :s "
+        "GROUP BY b ORDER BY b"), {"n": seconds, "origin": start, "a": asset.id, "s": start}).all()
+    by_bucket = {r.b: r for r in rows}
+    prev = db.execute(select(Trade.execution_price).where(Trade.asset_id == asset.id, Trade.executed_at < start)
+                      .order_by(Trade.executed_at.desc(), Trade.id.desc()).limit(1)).scalar()
+    last = prev if prev is not None else (rows[0].o if rows else asset.current_price)
+    out = []
+    for i in range(limit):
+        t = start + timedelta(seconds=seconds * i)
+        r = by_bucket.get(t)
+        if r is not None:
+            out.append(BarOut(timestamp=t, open_price=r.o, high_price=r.h, low_price=r.l, close_price=r.c,
+                              volume=int(r.v)))
+            last = r.c
+        else:
+            out.append(BarOut(timestamp=t, open_price=last, high_price=last, low_price=last, close_price=last, volume=0))
+    return out
 
 
 @router.get("/assets/{asset_id}/volume-profile")

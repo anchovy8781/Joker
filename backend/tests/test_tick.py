@@ -24,12 +24,17 @@ def test_tick_runs_scheduled_jobs_once(app, asset, db, monkeypatch):
     r = c.post("/api/internal/tick", headers={"X-Tick-Secret": SECRET})
     assert r.status_code == 200
     ran = {j["type"]: j["status"] for j in r.json()["ran"]}
-    assert ran.get("collect_data") == "succeeded" and ran.get("price_update") == "succeeded"
-    assert db.execute(select(func.count(PriceUpdate.id))).scalar_one() == 1
+    assert ran.get("collect_data") == "succeeded"
+    assert all(v == "succeeded" for v in ran.values()), ran
+    from app.security import utcnow
+    expected = 1 if utcnow().hour >= 1 else 0  # the daily price update is scheduled for 01:00 UTC
+    if expected:
+        assert ran.get("price_update") == "succeeded"
+    assert db.execute(select(func.count(PriceUpdate.id))).scalar_one() == expected
     # Same minute again: dedup keys mean nothing is re-run and prices are not re-applied.
     again = c.post("/api/internal/tick", headers={"X-Tick-Secret": SECRET}).json()
     assert again["ran"] == []
-    assert db.execute(select(func.count(PriceUpdate.id))).scalar_one() == 1
+    assert db.execute(select(func.count(PriceUpdate.id))).scalar_one() == expected
     assert db.execute(select(func.count(Job.id)).where(Job.status == "failed")).scalar_one() == 0
 
 

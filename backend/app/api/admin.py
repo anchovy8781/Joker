@@ -29,6 +29,7 @@ from app.models import (
 )
 from app.schemas import (
     QuickListIn,
+    SettingIn,
     AdjustmentIn,
     AnnouncementIn,
     ChannelRegisterIn,
@@ -39,7 +40,7 @@ from app.schemas import (
     UserStatusIn,
 )
 from app.security import require_admin, utcnow
-from app.services import channel_lookup, chat, jobs, listing, reconciliation, risk
+from app.services import channel_lookup, chat, runtime_settings, jobs, listing, reconciliation, risk
 from app.services.audit import write_audit
 from app.services.ledger import lock_account, post_entry
 from app.services.youtube import get_api_provider
@@ -162,6 +163,19 @@ def _approve_with_suggestion(s: Session, ch: Channel, admin: User, request: Requ
     write_audit(s, "listing.approve_reason", actor_id=admin.id, target_type="asset", target_id=a.id,
                 request_id=_rid(request), metadata={"reason": reason})
     return a
+
+
+@router.get("/settings")
+def get_app_settings(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return runtime_settings.listing(db)
+
+
+@router.post("/settings/{key}")
+def set_app_setting(key: str, body: SettingIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """One-touch switch for a runtime setting (audited)."""
+    uid = admin.id
+    value = run_in_transaction(db, lambda s: runtime_settings.set_value(s, key, body.value, uid))
+    return {"key": key, "value": value}
 
 
 @router.post("/quick-list", status_code=201)

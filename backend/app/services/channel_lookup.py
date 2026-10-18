@@ -2,6 +2,7 @@
 YouTube channel ID, and suggest listing terms for an administrator."""
 
 import html
+import json
 import re
 from urllib.parse import quote, unquote
 
@@ -152,3 +153,95 @@ def suggest_listing(db: Session, channel: Channel) -> dict:
         symbol = f"{base[:12 - len(str(n))]}{n}"
     return {"symbol": symbol, "initial_price": price, "shares_outstanding": 1_000_000,
             "subscriber_count": subs}
+
+
+_INITIAL_DATA = re.compile(r"(?:var ytInitialData|window\[\"ytInitialData\"\])\s*=\s*(\{.+?\});\s*</script>", re.S)
+
+
+def _walk(node, key: str):
+    """Yield every value stored under `key` anywhere inside a JSON tree."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == key:
+                yield v
+            yield from _walk(v, key)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _walk(v, key)
+
+
+def _text(v) -> str | None:
+    if not isinstance(v, dict):
+        return None
+    if "simpleText" in v:
+        return v["simpleText"]
+    runs = v.get("runs")
+    return "".join(r.get("text", "") for r in runs) if isinstance(runs, list) else None
+
+
+def parse_search_page(page: str, limit: int = 8) -> list[dict]:
+    m = _INITIAL_DATA.search(page)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except ValueError:
+        return []
+    out, seen = [], set()
+    for r in _walk(data, "channelRenderer"):
+        cid = r.get("channelId") if isinstance(r, dict) else None
+        if not cid or not CHANNEL_ID_RE.match(cid) or cid in seen:
+            continue
+        seen.add(cid)
+        thumbs = ((r.get("thumbnail") or {}).get("thumbnails") or [])
+        thumb = thumbs[-1]["url"] if thumbs else None
+        if thumb and thumb.startswith("//"):
+            thumb = "https:" + thumb
+        base = ((r.get("navigationEndpoint") or {}).get("browseEndpoint") or {}).get("canonicalBaseUrl") or ""
+        # YouTube puts the handle in subscriberCountText and the count in videoCountText on new layouts.
+        texts = [_text(r.get("subscriberCountText")), _text(r.get("videoCountText"))]
+        handle = base[1:] if base.startswith("/@") else next((t for t in texts if t and t.startswith("@")), None)
+        subs = next((t for t in texts if t and not t.startswith("@")), None)
+        out.append({"youtube_channel_id": cid, "title": _text(r.get("title")) or cid, "handle": handle,
+                    "thumbnail_url": thumb, "subscriber_text": subs})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def search_channels(query: str, api: YouTubeDataAPIProvider | None, limit: int = 8) -> list[dict]:
+    """Channels matching a name. A handle, URL or channel ID resolves to that one channel.
+    Name search reads YouTube's public results page (free); the Data API search costs
+    100 quota units, so it is only the fallback when the page cannot be read."""
+    q = query.strip()
+    try:
+        kind, value = parse_channel_ref(q)
+    except AppError:
+        kind = None
+    if kind == "id" or (kind == "handle" and ("youtube.com" in q or q.startswith("@"))):
+        cid, title = resolve(q, api)
+        return [{"youtube_channel_id": cid, "title": title or cid, "handle": value if kind == "handle" else None,
+                 "thumbnail_url": None, "subscriber_text": None}]
+    try:
+        r = httpx.get("https://www.youtube.com/results", params={"search_query": q, "sp": "EgIQAg=="},  # channels
+                      timeout=10, follow_redirects=True, cookies=_CONSENT,
+                      headers={"Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+                               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"})
+        found = parse_search_page(r.text, limit) if r.status_code == 200 else []
+    except httpx.HTTPError:
+        found = []
+    if found or api is None:
+        if not found and api is None:
+            # Last resort without a key: treat the text as a handle.
+            try:
+                cid, title = resolve(q, None)
+                return [{"youtube_channel_id": cid, "title": title or cid, "handle": "@" + q.lstrip("@"),
+                         "thumbnail_url": None, "subscriber_text": None}]
+            except AppError:
+                return []
+        return found
+    try:
+        return api.search_channels(q, limit)
+    except ProviderError:
+        return []

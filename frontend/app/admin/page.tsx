@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { ChannelAvatar } from "@/components/ChannelAvatar";
-import { ChannelPreview, type ChannelPreviewData } from "@/components/ChannelPreview";
+import { ChannelPicker } from "@/components/ChannelPicker";
+import type { ChannelPreviewData } from "@/components/ChannelPreview";
 import { Card, Empty, ErrorBox } from "@/components/ui";
 import { api, ApiError, type Freshness } from "@/lib/api";
 import { credits, dateTime } from "@/lib/format";
@@ -18,7 +19,7 @@ type Recon = { id: number; status: string; checked_accounts: number; mismatches:
 type PU = { id: number; symbol: string; effective_date: string; status: string; old_price: number; new_price: number; error: string | null };
 type Ticket = { id: number; status: string; reason?: string; message?: string; target_type?: string; target_id?: string | null; user_id?: number; created_at: string; resolution: string | null };
 
-const TABS = [["listing", "상장 관리"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
+const TABS = [["listing", "상장 관리"], ["settings", "⚙ 설정"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
 
 export default function AdminPage() {
   const { user, ready } = useAuth();
@@ -37,6 +38,7 @@ export default function AdminPage() {
       </div>
       <p className="text-xs text-muted">모든 관리자 조치는 관리자 ID·사유·대상·시각과 함께 감사 로그에 기록됩니다. 거래·원장 기록은 수정/삭제할 수 없습니다.</p>
       {tab === "listing" && <Listing />}
+      {tab === "settings" && <SettingsTab />}
       {tab === "risk" && <Risk />}
       {tab === "audit" && <AuditTab />}
       {tab === "jobs" && <Jobs />}
@@ -59,32 +61,17 @@ function useAction() {
 }
 
 function askReason(label: string): string | null {
-  // Pre-filled so a single OK tap is enough; the reason still goes to the audit log.
-  const r = window.prompt(`${label} 사유 (감사 로그에 기록)`, `관리자 ${label}`);
-  return r && r.trim().length >= 3 ? r.trim() : null;
+  // One touch: no dialog. A standard reason still goes to the audit log.
+  return `관리자 ${label}`;
 }
 
 function Listing() {
   const { data, reload } = useApi<AdminChannel[]>("/api/admin/channels", 15_000);
   const { msg, run } = useAction();
-  const [ref, setRef] = useState("");
   const [preview, setPreview] = useState<ChannelPreviewData | null>(null);
+  const [pickKey, setPickKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<"pending" | "listed" | "all">("pending");
-
-  useEffect(() => {
-    setPreview(null);
-    const v = ref.trim();
-    if (v.length < 2) return;
-    let alive = true;
-    const t = setTimeout(async () => {
-      try {
-        const p = await api<ChannelPreviewData>(`/api/listing-requests/preview?channel=${encodeURIComponent(v)}`);
-        if (alive) setPreview(p);
-      } catch { /* shown when the admin taps the button */ }
-    }, 600);
-    return () => { alive = false; clearTimeout(t); };
-  }, [ref]);
 
   const rows = data ?? [];
   const pending = rows.filter((c) => c.listing_status === "pending");
@@ -95,16 +82,14 @@ function Listing() {
   return (
     <div className="space-y-4">
       <Card title="⚡ 원터치 상장">
-        <p className="mb-2 text-sm text-muted">핸들만 넣으면 채널을 찾아 추천 가격으로 바로 상장해요.</p>
-        <div className="flex gap-2">
-          <input className="input flex-1 font-sans text-base" placeholder="@채널핸들 또는 주소" value={ref}
-            onChange={(e) => setRef(e.target.value)} autoCapitalize="off" />
-          <button className="btn-primary px-5" disabled={busy || ref.trim().length < 2}
-            onClick={async () => { await tap("/api/admin/quick-list", { channel: ref.trim() }); setRef(""); }}>
-            {busy ? "…" : "상장"}
+        <p className="mb-2 text-sm text-muted">채널 이름으로 찾아 고르면 채널 ID가 자동으로 들어가고, 추천 가격으로 바로 상장돼요.</p>
+        <ChannelPicker key={pickKey} onPicked={setPreview} />
+        {preview && (
+          <button className="btn-primary mt-3 w-full py-3 text-base" disabled={busy || preview.listing_status === "listed"}
+            onClick={async () => { await tap("/api/admin/quick-list", { channel: preview.youtube_channel_id }); setPreview(null); setPickKey((k) => k + 1); }}>
+            {preview.listing_status === "listed" ? "이미 상장된 채널" : busy ? "상장 중…" : `'${preview.title}' 바로 상장`}
           </button>
-        </div>
-        {preview && <div className="mt-3"><ChannelPreview p={preview} /></div>}
+        )}
       </Card>
       {msg && <p role="status" className="text-sm">{msg}</p>}
 
@@ -153,6 +138,60 @@ function Listing() {
         </ul>
       )}
       <p className="text-xs text-muted">승인은 구독자 수 기준 추천가(심볼·가격·주식 수 자동)로 바로 상장돼요. 거절하면 신청 비용이 환불돼요. 모든 조치는 감사 로그에 남아요.</p>
+    </div>
+  );
+}
+
+type SettingRow = { key: string; label: string; help: string; kind: "bool" | "choice"; choices: number[]; value: boolean | number; default: boolean | number };
+
+function fmtChoice(key: string, v: number): string {
+  if (key === "fee_bps") return `${v / 100}%`;
+  if (key === "bot_interval_seconds") return `${v}초`;
+  if (key === "listing_requests_per_day") return `${v}개`;
+  return v === 0 ? "무료" : `₩${credits(v)}`;
+}
+
+function SettingsTab() {
+  const { data, reload } = useApi<SettingRow[]>("/api/admin/settings");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const set = async (key: string, value: boolean | number) => {
+    setBusy(key);
+    setMsg(null);
+    try { await api(`/api/admin/settings/${key}`, { method: "POST", body: { value } }); reload(); }
+    catch (e) { setMsg(`⚠ ${e instanceof ApiError ? e.message : "실패"}`); }
+    finally { setBusy(null); }
+  };
+  if (!data) return <Empty>불러오는 중…</Empty>;
+  return (
+    <div className="space-y-2">
+      {msg && <p role="alert" className="text-sm">{msg}</p>}
+      {data.map((r) => (
+        <div key={r.key} className="rounded-2xl bg-panel p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-bold">{r.label}</div>
+              <div className="text-sm text-muted">{r.help}</div>
+            </div>
+            {r.kind === "bool" && (
+              <button role="switch" aria-checked={!!r.value} aria-label={r.label} disabled={busy === r.key}
+                onClick={() => set(r.key, !r.value)}
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${r.value ? "bg-emerald-500" : "bg-zinc-600"}`}>
+                <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${r.value ? "left-6" : "left-1"}`} />
+              </button>
+            )}
+          </div>
+          {r.kind === "choice" && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {r.choices.map((c) => (
+                <button key={c} disabled={busy === r.key} onClick={() => set(r.key, c)}
+                  className={`chip px-3 py-1.5 text-sm ${r.value === c ? "chip-on" : ""}`}>{fmtChoice(r.key, c)}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+      <p className="text-xs text-muted">바꾼 설정은 몇 초 안에 전체에 적용되고, 누가 언제 바꿨는지 감사 로그에 남아요.</p>
     </div>
   );
 }
