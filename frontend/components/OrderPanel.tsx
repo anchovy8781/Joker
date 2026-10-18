@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, newIdempotencyKey, type Asset, type Order, type Trade } from "@/lib/api";
+import { buzz, toast } from "@/lib/feedback";
 import { credits, estimateFee, orderStatusLabel, reasonLabel } from "@/lib/format";
 
 type Result = { order: Order; fills: Trade[]; replayed: boolean };
@@ -19,7 +20,7 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [type, setType] = useState<"limit" | "market">("limit");
   const [qty, setQty] = useState("1");
-  const [price, setPrice] = useState(String(asset.reference_price));
+  const [price, setPrice] = useState(String(asset.current_price || asset.reference_price));
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,10 +37,10 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
   const valid = Number.isInteger(q) && q > 0 && (type === "market" || (Number.isInteger(p) && p > 0));
   const est = useMemo(() => {
     if (!valid) return null;
-    const unit = type === "limit" ? p : asset.reference_price;
+    const unit = type === "limit" ? p : asset.current_price;
     const notional = q * unit;
     return { notional, fee: estimateFee(notional, asset.fee_bps) };
-  }, [valid, q, p, type, asset.reference_price, asset.fee_bps]);
+  }, [valid, q, p, type, asset.current_price, asset.fee_bps]);
   const surcharge = asset.fee_bps > 20;
   // Largest quantity the account can afford (buy) or holds (sell), for the quick-fill buttons.
   const unitPrice = type === "limit" && Number.isInteger(p) && p > 0 ? p : asset.current_price;
@@ -63,8 +64,21 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
       const r = await api<Result>("/api/orders", { method: "POST", body });
       setResult(r); // shown only after the server has validated and executed the order
       setKey(newIdempotencyKey());
+      const filled = r.fills.reduce((n, f) => n + f.quantity, 0);
+      if (filled > 0) {
+        const avg = Math.round(r.fills.reduce((v, f) => v + f.execution_price * f.quantity, 0) / filled);
+        toast(`${asset.symbol} ${filled}주 ${side === "buy" ? "매수" : "매도"} 체결 · 평균 ₩${credits(avg)}`, side === "buy" ? "up" : "down");
+        buzz([20, 40, 20]);
+      } else if (r.order.status === "rejected" || r.order.status === "canceled") {
+        toast(`주문이 체결되지 않았어요${r.order.status_reason ? ` · ${reasonLabel(r.order.status_reason)}` : ""}`, "warn");
+        buzz(60);
+      } else {
+        toast(`${asset.symbol} ${side === "buy" ? "매수" : "매도"} 주문 접수 · 가격이 닿으면 체결돼요`);
+        buzz(15);
+      }
       onDone?.();
     } catch (err) {
+      buzz(60);
       setError(err instanceof ApiError ? `${err.message}${err.code === "PRICE_OUT_OF_BAND" ? ` (${credits(err.details.min as number)} ~ ${credits(err.details.max as number)})` : ""}` : "네트워크 오류: 다시 시도하면 같은 주문으로 안전하게 재전송됩니다.");
     } finally {
       setPending(false);
@@ -113,7 +127,7 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
         <div className="flex justify-between"><span>{side === "buy" ? "주문 가능 현금" : "매도 가능 수량"}</span>
           <span className="font-mono text-text">{side === "buy" ? credits(availableCash) : credits(availableShares)}</span></div>
         {est && <>
-          <div className="flex justify-between"><span>예상 체결 금액{type === "market" && " (기준가)"}</span><span className="font-mono text-text">{credits(est.notional)}</span></div>
+          <div className="flex justify-between"><span>예상 체결 금액{type === "market" && " (현재가 기준)"}</span><span className="font-mono text-text">{credits(est.notional)}</span></div>
           <div className="flex justify-between"><span>예상 수수료 ({asset.fee_bps / 100}%{surcharge && " 할증"})</span><span className="font-mono text-text">{credits(est.fee)}</span></div>
         </>}
         <p className="pt-1 text-xs">실제 체결가와 수수료는 서버가 계산합니다. {type === "market" && "시장가는 기준가 ±5% 범위에서만 체결되고 잔량은 취소됩니다."}

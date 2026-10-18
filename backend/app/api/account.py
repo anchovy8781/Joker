@@ -43,7 +43,10 @@ def account(user: User = Depends(require_user), db: Session = Depends(get_db)):
     acct = db.get(Account, user.id)
     positions = _positions(db, user.id)
     pv = sum(p.market_value for p in positions)
+    from app.services.progress import progress
+
     return AccountOut(
+        **progress(db, user.id, acct.cash_balance + pv),
         user_id=user.id,
         cash_balance=acct.cash_balance,
         reserved_cash=acct.reserved_cash,

@@ -5,6 +5,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { ChangeText, channelName } from "@/components/AssetRow";
 import { ChannelAvatar } from "@/components/ChannelAvatar";
 import { Sparkline } from "@/components/Sparkline";
+import { TierBadge } from "@/components/TierBadge";
 import { Empty, ErrorBox, PnL } from "@/components/ui";
 import type { Account, Asset } from "@/lib/api";
 import { compact, credits, timeAgo } from "@/lib/format";
@@ -63,6 +64,22 @@ export default function Home() {
           </div>
           <div className="mt-1 text-[28px] font-bold leading-tight tabular-nums">{credits(a.total_equity)}원</div>
           <div className="mt-1 text-sm">평가손익 <PnL value={a.unrealized_pnl} /></div>
+          {a.level !== undefined && (
+            <div className="mt-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2 font-bold">Lv.{a.level} <TierBadge tier={a.tier} /></span>
+                <span className="text-xs text-muted tabular-nums">{credits(a.xp - a.level_start_xp)} / {credits(a.next_level_xp - a.level_start_xp)} XP</span>
+              </div>
+              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-panel2" role="progressbar" aria-label="다음 레벨까지"
+                aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(((a.xp - a.level_start_xp) / Math.max(1, a.next_level_xp - a.level_start_xp)) * 100)}>
+                <div className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${Math.min(100, ((a.xp - a.level_start_xp) / Math.max(1, a.next_level_xp - a.level_start_xp)) * 100)}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                체결·거래대금·미션으로 XP를 모아요{a.next_tier_equity ? ` · 총자산 ${credits(a.next_tier_equity)}원이면 다음 등급` : " · 최고 등급"}
+              </p>
+            </div>
+          )}
           <div className="mt-4 flex items-center justify-between rounded-2xl bg-panel2 px-4 py-3 text-sm">
             <span className="text-muted">주문 가능 금액</span>
             <b className="tabular-nums">{credits(a.available_cash)}원</b>

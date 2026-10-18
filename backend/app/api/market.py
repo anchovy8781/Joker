@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.serialize import activity_24h, asset_out, sparklines
 from app.services import live, simulator
+from app.services.progress import tier_for
 from app.config import get_settings
 from app.db import get_db
 from app.errors import AppError
@@ -360,7 +361,8 @@ def leaderboard(limit: int = Query(default=50, ge=1, le=200), db: Session = Depe
     ), {"l": limit}).all()
     return [
         LeaderboardRow(rank=i + 1, username=u, cash_balance=c, positions_value=int(pv),
-                       total_equity=c + int(pv), return_pct=round((c + int(pv)) / grant * 100 - 100, 4))
+                       total_equity=c + int(pv), return_pct=round((c + int(pv)) / grant * 100 - 100, 4),
+                       tier=tier_for(c + int(pv))[0])
         for i, (u, c, pv) in enumerate(rows)
     ]
 

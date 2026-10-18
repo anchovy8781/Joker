@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { AuthProvider } from "@/components/AuthProvider";
 import { Nav } from "@/components/Nav";
+import { Toaster } from "@/components/Toaster";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -25,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen">
         <AuthProvider>
           <Nav />
+          <Toaster />
           <main className="mx-auto max-w-7xl px-4 py-4 lg:py-6">{children}</main>
           <footer className="mx-auto max-w-7xl px-4 pb-28 pt-4 text-xs leading-relaxed text-muted lg:pb-10">
             모든 가격은 게임 규칙에 따른 가상 가격이며 실제 채널의 금전적 가치나 미래 성과를 의미하지 않습니다.

@@ -173,6 +173,12 @@ export type Account = {
   unrealized_pnl: string;
   positions_count: number;
   note: string;
+  xp: number;
+  level: number;
+  level_start_xp: number;
+  next_level_xp: number;
+  tier: string;
+  next_tier_equity: number | null;
 };
 
 export type Position = {
@@ -191,7 +197,7 @@ export type Position = {
 
 export type LedgerEntry = { id: number; entry_type: string; amount: number; balance_after: number; reference_type: string | null; reference_id: string | null; memo: string | null; created_at: string };
 export type MetricPoint = { observed_date: string; subscriber_count: number | null; view_count: number | null; video_count: number | null; source: string };
-export type LeaderRow = { rank: number; username: string; total_equity: number; cash_balance: number; positions_value: number; return_pct: number };
+export type LeaderRow = { rank: number; username: string; total_equity: number; cash_balance: number; positions_value: number; return_pct: number; tier: string };
 export type Notification = { id: number; kind: string; title: string; body: string; link: string | null; created_at: string; read: boolean };
 export type Mission = { code: string; title: string; description: string; reward: number; period: "once" | "daily"; target: number; progress: number; claimed: boolean; claimable: boolean };
 export type DonationBoxInfo = { id: number; room: string; title: string; goal: number; raised: number; owner: string; state: "open" | "closed" | "expired"; created_at: string; closes_at: string };

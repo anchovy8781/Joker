@@ -26,3 +26,12 @@ body { @apply bg-bg font-sans text-text antialiased; letter-spacing: -0.01em; }
   .no-scrollbar { scrollbar-width: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
 }
+
+/* Trading-screen feedback: numbers flash on a tick, toasts slide in. */
+@keyframes ytx-flash-up { from { background-color: rgb(240 68 82 / 0.35); } to { background-color: transparent; } }
+@keyframes ytx-flash-down { from { background-color: rgb(49 130 246 / 0.35); } to { background-color: transparent; } }
+.flash-up { animation: ytx-flash-up 0.7s ease-out; border-radius: 6px; }
+.flash-down { animation: ytx-flash-down 0.7s ease-out; border-radius: 6px; }
+@keyframes ytx-toast-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.toast-in { animation: ytx-toast-in 0.18s ease-out; }
+@media (prefers-reduced-motion: reduce) { .flash-up, .flash-down, .toast-in { animation: none; } }

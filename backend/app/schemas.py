@@ -182,6 +182,13 @@ class AccountOut(BaseModel):
     realized_pnl: Decimal
     unrealized_pnl: Decimal
     positions_count: int
+    # progression (see services/progress.py)
+    xp: int = 0
+    level: int = 1
+    level_start_xp: int = 0
+    next_level_xp: int = 100
+    tier: str = "브론즈"
+    next_tier_equity: int | None = None
     currency: str = "CRD"
     note: str = "Virtual credits only. No cash value; cannot be bought, sold or exchanged."
 
@@ -220,6 +227,7 @@ class LeaderboardRow(BaseModel):
     cash_balance: int
     positions_value: int
     return_pct: float
+    tier: str = "브론즈"
 
 
 # ---------------------------------------------------------------- user reports / appeals

@@ -1,36 +1,46 @@
 "use client";
 
 import { useAuth } from "@/components/AuthProvider";
-import { Card, Change, Empty, ErrorBox } from "@/components/ui";
+import { TierBadge } from "@/components/TierBadge";
+import { Change, Empty, ErrorBox } from "@/components/ui";
 import type { LeaderRow } from "@/lib/api";
-import { credits } from "@/lib/format";
+import { compact, credits } from "@/lib/format";
 import { useApi } from "@/lib/hooks";
 
 export default function Leaderboard() {
   const { user } = useAuth();
   const { data, error } = useApi<LeaderRow[]>("/api/leaderboard?limit=100", 30_000);
+  const mine = data?.find((r) => r.username === user?.username);
   return (
-    <Card title="전체 자산 랭킹" right={<span className="text-xs text-muted">서버 계좌 + 현재 시장가 평가 · 시작 자금 1,000,000 대비</span>}>
+    <div className="space-y-3">
+      <div>
+        <h1 className="text-2xl font-bold">자산 랭킹</h1>
+        <p className="text-sm text-muted">현금 + 보유 주식(현재가) · 시작 자금 1,000,000 대비 수익률</p>
+      </div>
       <ErrorBox error={error} />
-      {!data ? <Empty>불러오는 중…</Empty> : data.length === 0 ? <Empty>아직 참가자가 없습니다</Empty> : (
-        <div className="-mx-4 overflow-x-auto px-4">
-          <table className="table">
-            <thead><tr><th>순위</th><th>사용자</th><th className="num">총자산</th><th className="num">현금</th><th className="num">주식 평가액</th><th className="num">수익률</th></tr></thead>
-            <tbody>
-              {data.map((r) => (
-                <tr key={r.username} className={r.username === user?.username ? "bg-panel2" : ""}>
-                  <td className="font-mono">{r.rank <= 3 ? ["🥇", "🥈", "🥉"][r.rank - 1] : r.rank}</td>
-                  <td>{r.username}{r.username === user?.username && <span className="ml-1 text-xs text-muted">(나)</span>}</td>
-                  <td className="num">{credits(r.total_equity)}</td>
-                  <td className="num">{credits(r.cash_balance)}</td>
-                  <td className="num">{credits(r.positions_value)}</td>
-                  <td className="num"><Change percent={r.return_pct} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {mine && (
+        <div className="flex items-center justify-between rounded-3xl bg-primary/15 px-4 py-3">
+          <span className="font-bold">내 순위 {mine.rank}위 <TierBadge tier={mine.tier} className="ml-1" /></span>
+          <span className="text-right"><b className="tabular-nums">₩{credits(mine.total_equity)}</b> <Change percent={mine.return_pct} className="text-sm" /></span>
         </div>
       )}
-    </Card>
+      {!data ? <Empty>불러오는 중…</Empty> : data.length === 0 ? <Empty>아직 참가자가 없어요</Empty> : (
+        <ol className="space-y-2">
+          {data.map((r) => (
+            <li key={r.username} className={`flex items-center gap-3 rounded-3xl px-4 py-3 ${r.username === user?.username ? "bg-panel2" : "bg-panel"}`}>
+              <span className="w-8 text-center text-lg font-bold">{r.rank <= 3 ? ["🥇", "🥈", "🥉"][r.rank - 1] : r.rank}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 truncate font-bold">{r.username} <TierBadge tier={r.tier} /></div>
+                <div className="text-xs text-muted">현금 {compact(r.cash_balance)} · 주식 {compact(r.positions_value)}</div>
+              </div>
+              <div className="text-right">
+                <div className="font-bold tabular-nums">₩{compact(r.total_equity)}</div>
+                <Change percent={r.return_pct} className="text-sm" />
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }

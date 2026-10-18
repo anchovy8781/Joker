@@ -69,3 +69,17 @@ def test_overview_and_user_management(make_admin, make_user, asset):
     assert r.status_code == 201
     assert admin.post(f"/api/admin/users/{me['id']}/status", json={"status": "restricted", "reason": "도배"}).status_code == 200
     assert next(r for r in admin.get("/api/admin/users").json() if r["id"] == me["id"])["status"] == "restricted"
+
+
+def test_levels_and_tiers(make_user, asset):
+    from app.services.progress import level_for, tier_for
+
+    assert level_for(0)[0] == 1 and level_for(99)[0] == 1 and level_for(100)[0] == 2 and level_for(300)[0] == 3
+    assert tier_for(1_000_000)[0] == "브론즈" and tier_for(2_500_000) == ("골드", 5_000_000)
+    assert tier_for(500_000_000) == ("마스터", None)
+    u = make_user()
+    a0 = u.get("/api/account").json()
+    assert a0["level"] == 1 and a0["xp"] == 0 and a0["tier"]
+    u.order(asset, "buy", 5)
+    a1 = u.get("/api/account").json()
+    assert a1["xp"] >= 10 and a1["next_level_xp"] > a1["level_start_xp"]

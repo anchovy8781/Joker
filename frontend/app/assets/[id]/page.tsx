@@ -16,6 +16,7 @@ import { Card, Change, DemoBadge, Empty, ErrorBox, FreshnessBadge, TradingBadge 
 import type { Account, Asset, Bar, MetricPoint, Order, OrderBook, Position, Trade } from "@/lib/api";
 import { api } from "@/lib/api";
 import { compact, credits, dateTime, orderStatusLabel, pct, popularityLabel } from "@/lib/format";
+import { usePriceFlash } from "@/lib/feedback";
 import { useApi } from "@/lib/hooks";
 
 type PriceUpdate = { effective_date: string; status: string; old_price: number; new_price: number; daily_return: string | null; fundamental_return: string | null; flow_return: string | null; sentiment_return: string | null; error: string | null };
@@ -63,7 +64,7 @@ export default function AssetPage() {
   const [chartInterval, setChartInterval] = useState<ChartInterval>("1m");
   const [show, setShow] = useState({ ma: true, trend: true, profile: true });
   const [picked, setPicked] = useState<number | null>(null);
-  const asset = useApi<Asset>(`/api/assets/${id}`, 10_000);
+  const asset = useApi<Asset>(`/api/assets/${id}`, 4_000);
   const iv = INTERVALS.find((x) => x.key === chartInterval)!;
   const bars = useApi<Bar[]>(`/api/assets/${id}/history?interval=${chartInterval}&limit=${iv.limit}`, iv.poll);
   const since = bars.data?.[0]?.timestamp;
@@ -104,7 +105,7 @@ export default function AssetPage() {
         </div>
       </div>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-3xl font-bold tabular-nums">₩{credits(a.current_price)}</span>
+        <PriceTicker price={a.current_price} />
         <Change value={a.change} percent={a.change_pct} />
         <span className="text-xs text-muted">기준가 {credits(a.reference_price)} · 전일 {credits(a.previous_price)} · 인기도 {a.popularity_score ?? "—"}/50 {popularityLabel(a.popularity_score)}</span>
       </div>
@@ -283,4 +284,10 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-mono text-base tabular-nums">{value}</div>
     </div>
   );
+}
+
+/** The big price, flashing red/blue on each tick like a trading screen. */
+function PriceTicker({ price }: { price: number }) {
+  const flash = usePriceFlash(price);
+  return <span className={`px-1 text-3xl font-bold tabular-nums ${flash}`}>₩{credits(price)}</span>;
 }

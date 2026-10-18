@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Asset } from "@/lib/api";
 import { credits, pct } from "@/lib/format";
+import { usePriceFlash } from "@/lib/feedback";
 import { ChannelAvatar } from "./ChannelAvatar";
 
 export const channelName = (a: Asset) => a.channel.title.replace(/^\[DEMO\]\s*/, "");
@@ -14,8 +15,9 @@ export function ChangeText({ percent, className = "" }: { percent: number; class
 export function AssetRow({ a, rank, fav, onFav, right }: {
   a: Asset; rank?: number; fav?: boolean; onFav?: (id: number) => void; right?: React.ReactNode;
 }) {
+  const flash = usePriceFlash(a.current_price);
   return (
-    <div className="flex items-center gap-3 rounded-3xl bg-panel px-4 py-3">
+    <div className="flex items-center gap-3 rounded-3xl bg-panel px-4 py-3 transition-transform active:scale-[0.99]">
       {rank !== undefined && <span className="w-5 text-center text-lg font-bold italic text-muted">{rank}</span>}
       <Link href={`/assets/${a.id}`} className="flex min-w-0 flex-1 items-center gap-3">
         <ChannelAvatar src={a.channel.thumbnail_url} title={a.channel.title} seed={a.symbol} size={52} />
@@ -35,7 +37,7 @@ export function AssetRow({ a, rank, fav, onFav, right }: {
       )}
       {right ?? (
         <Link href={`/assets/${a.id}`} className="text-right">
-          <div className="font-bold tabular-nums">₩{credits(a.current_price)}</div>
+          <div className={`px-1 font-bold tabular-nums ${flash}`}>₩{credits(a.current_price)}</div>
           <ChangeText percent={a.change_pct} className="text-sm" />
         </Link>
       )}
