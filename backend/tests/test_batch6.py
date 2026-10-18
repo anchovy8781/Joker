@@ -212,3 +212,24 @@ def test_chart_patterns_are_loose_and_can_fail(asset, db):
     assert patterns and any(m["pattern"] is None for m in moods)
     assert any(m["break_at"] < 1 for m in patterns) and any(m["break_at"] > 1 for m in patterns)
     assert len({round(m["adherence"], 3) for m in patterns}) > 10
+
+
+def test_fast_tape_fill_keeps_the_books_exact(db, asset):
+    """The one-call heartbeat fill (ytx_tape_fill) moves cash, shares, fees, ledger rows,
+    bars and the price exactly like the full engine: reconciliation stays clean."""
+    bots.ensure_bots(db)
+    db.commit()
+    rng = random.Random(5)
+    t0 = datetime.now(UTC)
+    before = db.execute(select(func.count(Trade.id))).scalar_one()
+    for i in range(40):
+        bots.tape_tick(db, [asset], now=t0 + timedelta(seconds=4 * i), rng=rng)
+    db.commit()
+    trades = db.execute(select(func.count(Trade.id))).scalar_one() - before
+    assert trades >= 30
+    fees = db.execute(select(func.count(LedgerEntry.id)).where(LedgerEntry.entry_type == "trade_fee")).scalar_one()
+    assert fees > 0
+    bars = db.execute(text("SELECT count(*) FROM market_bars WHERE asset_id = :a AND interval = '1m'"),
+                      {"a": asset}).scalar_one()
+    assert bars >= 1
+    assert reconciliation.reconcile(db).status == "ok"

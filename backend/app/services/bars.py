@@ -27,11 +27,25 @@ def bucket(ts: datetime, interval: str) -> datetime:
     return ts.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+_UPSERT3 = text(
+    """
+    INSERT INTO market_bars (asset_id, interval, timestamp, open_price, high_price, low_price,
+                             close_price, volume)
+    VALUES (:a, '1m', :t1, :p, :p, :p, :p, :v), (:a, '1h', :t2, :p, :p, :p, :p, :v),
+           (:a, '1d', :t3, :p, :p, :p, :p, :v)
+    ON CONFLICT (asset_id, interval, timestamp) DO UPDATE SET
+        high_price = GREATEST(market_bars.high_price, EXCLUDED.high_price),
+        low_price = LEAST(market_bars.low_price, EXCLUDED.low_price),
+        close_price = EXCLUDED.close_price,
+        volume = market_bars.volume + EXCLUDED.volume
+    """
+)
+
+
 def record_trade_bar(db: Session, asset_id: int, price: int, quantity: int, ts: datetime) -> None:
-    for interval in ("1m", "1h", "1d"):
-        db.execute(
-            _UPSERT, {"a": asset_id, "i": interval, "t": bucket(ts, interval), "p": price, "v": quantity}
-        )
+    # one round trip for the minute, hour and day bars
+    db.execute(_UPSERT3, {"a": asset_id, "t1": bucket(ts, "1m"), "t2": bucket(ts, "1h"), "t3": bucket(ts, "1d"),
+                          "p": price, "v": quantity})
 
 
 def record_reference_bar(db: Session, asset_id: int, price: int, ts: datetime) -> None:

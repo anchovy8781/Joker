@@ -114,6 +114,8 @@ def _validate_shape(req: OrderRequest) -> None:
 
 
 def _find_existing(db: Session, user_id: int, req: OrderRequest) -> Order | None:
+    if req.idempotency_key.startswith(("bot:", "mm:")):
+        return None  # random per order (never retried); the unique constraint still guards it
     existing = db.execute(
         select(Order).where(Order.user_id == user_id, Order.idempotency_key == req.idempotency_key)
     ).scalar_one_or_none()

@@ -8,7 +8,7 @@ from app.models import Notification, Position, User
 
 def notify(db: Session, user_id: int, kind: str, title: str, body: str = "", link: str | None = None) -> None:
     user = db.get(User, user_id)
-    if user is None or user.role == "system":
+    if user is None or user.role in ("system", "bot"):  # nobody reads these accounts' inboxes
         return
     db.add(Notification(user_id=user_id, kind=kind, title=title[:200], body=body[:1000], link=link))
 

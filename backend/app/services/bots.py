@@ -340,7 +340,7 @@ def _decide(p: Persona, rng: random.Random, asset: MarketAsset, ctx: dict, held:
 
 # Long-term investors never flip a sell into a buy; the bank quotes passively more often.
 NO_FLIP = {"buffett", "munger"}
-PASSIVE_P = {"goldman": 0.6, "tape": 0.0}
+PASSIVE_P = {"goldman": 0.6, "tape": 0.0, "tape_full": 0.0}
 
 
 def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, rng: random.Random,
@@ -380,6 +380,34 @@ def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, 
         return False
 
 
+def _fast_fill(db: Session, bot: User, asset: MarketAsset, side: str, qty: int, key: str) -> int | None:
+    """Heartbeat market order against the market maker's ladder in one database call
+    (ytx_tape_fill, migration 0011). Returns the fill price, 0 if the bot lacks cash or
+    shares, or None when the full matching engine has to handle it."""
+    from sqlalchemy import text
+
+    from app.services.fees import fee_policy
+
+    s = get_settings()
+    db.flush()
+    price = db.execute(text(
+        "SELECT ytx_tape_fill(:a, :b, :side, :q, :fee, :base, :key, :levels)"),
+        {"a": asset.id, "b": bot.id, "side": side, "q": qty,
+         "fee": fee_policy(asset, utcnow()).bps, "base": s.fee_bps, "key": key, "levels": s.mm_levels}).scalar()
+    if price:
+        # rows changed inside the database: forget cached copies of what it touches
+        # (users and channels did not change, keep those)
+        from app.models import Order
+
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        for obj in list(db.identity_map.values()):
+            if isinstance(obj, (Account, Position, Order, Trade)):
+                db.expire(obj)
+        set_committed_value(asset, "current_price", price)  # the only asset field the tape reads
+    return price
+
+
 def _cancel_stale_bot_orders(db: Session, bot_ids: list[int], now: datetime) -> None:
     """Passive bot quotes live ~2 minutes so the book doesn't fill with stale orders."""
     from app.models import Order
@@ -412,11 +440,56 @@ def _maybe_requote(db: Session, asset: MarketAsset, now: datetime, traded: bool,
 _tape_cursor = 0
 
 
+def _tape_asset(db: Session, asset: MarketAsset, retail: list[User], rng: random.Random, now: datetime,
+                held: dict[tuple[int, int], int], cash: dict[int, int], max_orders: int = 3) -> int:
+    """This tick's retail orders on one asset; returns how many went through. `held` and
+    `cash` are this tick's snapshot of the retail bots' free shares and cash (read once per
+    tick, then adjusted locally) so an order costs one database call, not several."""
+    orders = 0
+    price = max(1, asset.current_price)
+    for side, value in tape_orders(asset, intraday.fair_price(asset), rng, now)[:max_orders]:
+        # A sell comes from someone who actually holds shares, so selling pressure is real.
+        sellers = [b for b in retail if held.get((b.id, asset.id), 0) > 0]
+        if side == "sell" and not sellers:
+            side = "buy"
+        bot = rng.choice(sellers) if side == "sell" else rng.choice(retail)
+        if side == "sell":
+            qty = min(held[(bot.id, asset.id)], max(1, int(value // price)))
+        else:
+            if cash.get(bot.id, 0) < get_settings().mm_level_value:
+                _refill(db, bot, BY_NAME[bot.username], now)
+                cash[bot.id] = db.get(Account, bot.id).cash_balance
+            qty = min(max(1, int(value // price)), max(0, cash.get(bot.id, 0) // (price * 2)))
+        qty = min(qty, get_settings().max_order_quantity)
+        if qty <= 0:
+            continue
+        key = f"bot:{uuid.uuid4().hex}"
+        filled = _fast_fill(db, bot, asset, side, qty, key)
+        if filled is None:  # someone else's order is at the top of the book: full engine
+            ok = _order(db, bot, asset, side, qty * price, rng, "tape_full")
+        else:
+            ok = filled > 0
+        if ok:
+            orders += 1
+            if side == "sell":
+                held[(bot.id, asset.id)] -= qty
+            else:
+                cash[bot.id] = cash.get(bot.id, 0) - qty * price
+                held[(bot.id, asset.id)] = held.get((bot.id, asset.id), 0) + qty
+        price = max(1, asset.current_price)
+    db.commit()  # one commit per asset: the market maker's rows are locked only briefly
+    if orders:
+        # Ladder has mm_levels per side: re-centre only after a few steps of drift.
+        _maybe_requote(db, asset, now, True, True, steps=3)
+    return orders
+
+
 def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: random.Random | None = None) -> dict:
-    """The few-second heartbeat of the market: one small market order from a retail bot on
-    each asset someone is watching plus one more in rotation, so every price keeps ticking
-    even when the big personas are between their (minutes-apart) decisions. See tape_orders
-    for how direction and size are drawn."""
+    """The few-second heartbeat of the market. Every listed asset keeps trading whether or
+    not anyone is looking at it: each tick serves the assets someone is watching plus the
+    next ones in rotation (bot_tape_rotation; by default all of them). Fills go through
+    ytx_tape_fill — one database call each — so a tick over ten assets takes a couple of
+    seconds even with a distant database. See tape_orders for direction and size."""
     global _tape_cursor
     now = now or utcnow()
     rng = rng or random.Random()
@@ -426,38 +499,26 @@ def tape_tick(db: Session, hot: list[int], now: datetime | None = None, rng: ran
     if not assets:
         return {"orders": 0}
     by_id = {a.id: a for a in assets}
-    pick = [by_id[i] for i in hot if i in by_id][:2]
-    # Watched assets every tick; the rest take turns (every third tick while someone watches),
-    # keeping a tick within a few seconds even with a distant database.
-    _tape_cursor += 1
-    if not pick or _tape_cursor % 3 == 0:
-        other = assets[(_tape_cursor // (3 if pick else 1)) % len(assets)]
-        if other not in pick:
-            pick.append(other)
-    names = [p.username.lower() for p in PERSONAS if p.kind == "noise"]
-    retail = db.execute(select(User).where(User.normalized_username.in_(names))).scalars().all()
+    watched = [by_id[i] for i in hot if i in by_id][:2]
+    others = [a for a in assets if a not in watched]
+    k = min(len(others), max(1, get_settings().bot_tape_rotation))
+    turn = [others[(_tape_cursor + j) % len(others)] for j in range(k)] if others else []
+    _tape_cursor = (_tape_cursor + k) % max(1, len(others))
+    retail = db.execute(select(User).where(User.normalized_username.in_(
+        [p.username.lower() for p in PERSONAS if p.kind == "noise"]))).scalars().all()
     if not retail:
         return {"orders": 0}
+    ids = [b.id for b in retail]
+    held = {(p.user_id, p.asset_id): p.quantity - p.reserved_quantity
+            for p in db.execute(select(Position).where(Position.user_id.in_(ids))).scalars()}
+    cash = {a.user_id: a.cash_balance - a.reserved_cash
+            for a in db.execute(select(Account).where(Account.user_id.in_(ids))).scalars()}
     orders = 0
-    for asset in pick:
-        traded = False
-        held = {p.user_id: p.quantity - p.reserved_quantity for p in db.execute(select(Position).where(
-            Position.asset_id == asset.id, Position.user_id.in_([b.id for b in retail]))).scalars()}
-        for side, value in tape_orders(asset, intraday.fair_price(asset), rng, now):
-            # A sell comes from someone who actually holds shares, so selling pressure is real.
-            sellers = [b for b in retail if held.get(b.id, 0) > 0]
-            bot = rng.choice(sellers) if side == "sell" and sellers else rng.choice(retail)
-            _refill(db, bot, BY_NAME[bot.username], now)
-            if _order(db, bot, asset, side, value, rng, "tape"):
-                orders += 1
-                traded = True
-                db.commit()
-                db.refresh(asset)
-        if traded:
-            # Ladder has mm_levels per side: re-centre only after a few steps of drift.
-            _maybe_requote(db, asset, now, True, True, steps=3)
-    db.commit()
-    return {"orders": orders, "assets": len(pick)}
+    # watched assets lead, and get a second turn halfway through a long rotation
+    schedule = watched + turn[: len(turn) // 2] + (watched if len(turn) >= 6 else []) + turn[len(turn) // 2:]
+    for a in schedule:
+        orders += _tape_asset(db, a, retail, rng, now, held, cash, max_orders=3 if a in watched else 2)
+    return {"orders": orders, "assets": len(watched) + len(turn)}
 
 
 def run_round(db: Session, now: datetime | None = None, rng: random.Random | None = None,
