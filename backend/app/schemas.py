@@ -147,6 +147,13 @@ class OrderIn(Strict):
     idempotency_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_\-:.]+$")
 
 
+class OrderAmendIn(Strict):
+    """정정: new price and/or quantity for a resting limit order (omitted = unchanged)."""
+    limit_price: int | None = Field(default=None, gt=0)
+    quantity: int | None = Field(default=None, gt=0)
+    idempotency_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_\-:.]+$")
+
+
 class OrderOut(Out):
     id: int
     asset_id: int

@@ -11,6 +11,8 @@ import { useMarketHours } from "@/components/MarketHoursBadge";
 import { CandleChart, type VolumeProfile } from "@/components/CandleChart";
 import { ChannelAvatar } from "@/components/ChannelAvatar";
 import { LivePanel } from "@/components/LivePanel";
+import { MyOrders } from "@/components/MyOrders";
+import { ChannelGrowth } from "@/components/ChannelGrowth";
 import { PriceAlerts } from "@/components/PriceAlerts";
 import { Card, Change, DemoBadge, Empty, ErrorBox, FreshnessBadge, TradingBadge } from "@/components/ui";
 import type { Account, Asset, Bar, MetricPoint, Order, OrderBook, Position, Trade } from "@/lib/api";
@@ -29,16 +31,6 @@ const EVENT_LABEL: Record<string, string> = {
   sustained_view_decline: "조회 수 증가세 지속 둔화",
 };
 
-function growth(points: MetricPoint[], key: "subscriber_count" | "view_count", days: number): number | null {
-  const valid = points.filter((p) => p[key] !== null);
-  if (valid.length < 2) return null;
-  const last = valid[valid.length - 1];
-  const target = new Date(last.observed_date);
-  target.setDate(target.getDate() - days);
-  const base = [...valid].reverse().find((p) => new Date(p.observed_date) <= target);
-  if (!base || !base[key]) return null;
-  return ((last[key]! - base[key]!) / base[key]!) * 100;
-}
 
 type ChartInterval = "1s" | "5s" | "10s" | "30s" | "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "1d" | "1w" | "1mo";
 const INTERVALS: { key: ChartInterval; label: string; group: string; limit: number; poll: number }[] = [
@@ -169,13 +161,8 @@ export default function AssetPage() {
           </Card>
 
           <Card title="채널 공개 지표" right={<span className="text-xs text-muted">{a.is_demo ? "데모 공급자 생성값" : "YouTube Data API 공개 통계"}</span>}>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Metric label="구독자" value={a.channel.hidden_subscriber_count ? "비공개" : compact(latest?.subscriber_count)} />
-              <Metric label="총 조회 수" value={compact(latest?.view_count)} />
-              <Metric label="구독자 7일 변화" value={fmtGrowth(growth(m, "subscriber_count", 7))} />
-              <Metric label="조회 수 7일 / 28일 증가" value={`${fmtGrowth(growth(m, "view_count", 7))} / ${fmtGrowth(growth(m, "view_count", 28))}`} />
-            </div>
-            <p className="mt-3 text-xs text-muted">기간별 변화는 이 서비스가 직접 수집한 일별 기록으로 계산합니다. 데이터 품질: {a.channel.data_quality_status}</p>
+            <ChannelGrowth assetId={a.id} fallback={{ subscribers: latest?.subscriber_count ?? null, views: latest?.view_count ?? null }} />
+            <p className="mt-3 text-xs text-muted">변화량은 5분마다 모은 기록과 일별 기록으로 계산해요. 기록이 기간보다 짧으면 상장 후 기간 기준으로 보여 줘요. 데이터 품질: {a.channel.data_quality_status}</p>
           </Card>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -252,19 +239,7 @@ export default function AssetPage() {
           </Card>
           {user && (
             <Card title="내 주문 (이 종목)">
-              {!orders.data?.length ? <Empty>주문 없음</Empty> : (
-                <ul className="space-y-2 text-xs">
-                  {orders.data.map((o) => (
-                    <li key={o.id} className="flex items-center justify-between gap-2">
-                      <span className={o.side === "buy" ? "text-up" : "text-down"}>{o.side === "buy" ? "▲ 매수" : "▼ 매도"} {o.order_type === "limit" ? credits(o.limit_price) : "시장가"}</span>
-                      <span className="text-muted">{o.filled_quantity}/{o.quantity} · {orderStatusLabel(o.status)}</span>
-                      {(o.status === "open" || o.status === "partially_filled" || o.status === "scheduled") && (
-                        <button className="btn-ghost px-2 py-0.5 text-xs" onClick={async () => { await api(`/api/orders/${o.id}/cancel`, { method: "POST" }); refresh(); }}>취소</button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <MyOrders orders={orders.data ?? []} currentPrice={a.current_price} onChange={refresh} />
             </Card>
           )}
         </div>
@@ -273,9 +248,6 @@ export default function AssetPage() {
   );
 }
 
-function fmtGrowth(v: number | null) {
-  return v === null ? "기록 부족" : pct(v);
-}
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (

@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.db import get_db, run_in_transaction, session_factory
 from app.errors import AppError
 from app.models import Order, Trade, User
-from app.schemas import OrderIn, OrderOut, PlaceOrderOut, TradeOut
+from app.schemas import OrderAmendIn, OrderIn, OrderOut, PlaceOrderOut, TradeOut
 from app.security import hit_rate_limit, require_user
 from app.services import orders as engine
 from app.services import auto_orders, risk
@@ -84,3 +84,40 @@ def cancel(order_id: int, user: User = Depends(require_user), db: Session = Depe
     user_id = user.id
     order = run_in_transaction(db, lambda s: engine.cancel_order(s, s.get(User, user_id), order_id))
     return order_out(order)
+
+
+@router.post("/{order_id}/amend", response_model=PlaceOrderOut)
+def amend(order_id: int, body: OrderAmendIn, response: Response, user: User = Depends(require_user),
+          db: Session = Depends(get_db)):
+    """매매 정정: replace a resting limit order's price and/or quantity in one step. The old
+    order's remainder is cancelled (reservation released) and a new order is placed in the
+    same transaction — like a real exchange, the new order joins the back of the queue at its
+    price, and it can fill immediately if the new price crosses the book."""
+    s = get_settings()
+    hit_rate_limit(f"orders:user:{user.id}", *s.rl_orders_per_user)
+    user_id = user.id
+
+    def tx(session: Session):
+        u = session.get(User, user_id)
+        done = session.execute(select(Order).where(Order.user_id == user_id,
+                                                   Order.idempotency_key == body.idempotency_key)).scalar_one_or_none()
+        if done is not None:  # a retry of an amendment that already went through
+            return engine.PlaceResult(order=done, replayed=True)
+        old = session.get(Order, order_id)
+        if old is None or old.user_id != user_id:
+            raise AppError(404, "ORDER_NOT_FOUND", "Order not found")
+        if old.order_type != "limit":
+            raise AppError(409, "NOT_AMENDABLE", "지정가 주문만 정정할 수 있어요")
+        if body.limit_price is None and body.quantity is None:
+            raise AppError(422, "NOTHING_TO_CHANGE", "바꿀 가격이나 수량을 입력해 주세요")
+        engine.cancel_order(session, u, order_id, reason="USER_AMENDED")
+        req = engine.OrderRequest(asset_id=old.asset_id, side=old.side, order_type="limit",
+                                  quantity=body.quantity or old.remaining_quantity,
+                                  limit_price=body.limit_price or old.limit_price,
+                                  idempotency_key=body.idempotency_key)
+        return engine.place_order(session, u, req)
+
+    result = run_in_transaction(db, tx)
+    response.status_code = 200
+    return PlaceOrderOut(order=order_out(result.order), fills=[TradeOut.model_validate(t) for t in result.trades],
+                         replayed=result.replayed)

@@ -209,6 +209,50 @@ def orderbook(asset_id: int, depth: int = Query(default=10, ge=1, le=50), db: Se
     return OrderBookOut(asset_id=asset_id, bids=side("buy", True), asks=side("sell", False))
 
 
+@router.get("/assets/{asset_id}/growth")
+def growth(asset_id: int, db: Session = Depends(get_db)):
+    """Subscriber and view changes over the last 1/7/28 days. Uses 5-minute live samples and
+    daily snapshots together; when a channel has less history than the window (e.g. listed
+    today), the change since the oldest record is returned with the span it actually covers,
+    instead of no answer at all."""
+    from app.models import ChannelSample
+
+    a, c = _get_asset(db, asset_id)
+    now = utcnow()
+    points: dict[str, list[tuple[datetime, int]]] = {"subscriber_count": [], "view_count": []}
+    for t, subs, views in db.execute(select(ChannelSample.observed_at, ChannelSample.subscriber_count,
+                                            ChannelSample.view_count).where(ChannelSample.channel_id == c.id)).all():
+        if subs is not None:
+            points["subscriber_count"].append((t, int(subs)))
+        if views is not None:
+            points["view_count"].append((t, int(views)))
+    for t, kind, v in db.execute(select(ChannelMetric.observed_at, ChannelMetric.metric_type, ChannelMetric.metric_value)
+                                 .where(ChannelMetric.channel_id == c.id, ChannelMetric.source == c.data_source,
+                                        ChannelMetric.metric_type.in_(("subscriber_count", "view_count")),
+                                        ChannelMetric.observed_at >= now - timedelta(days=30))).all():
+        points[kind].append((t, int(v)))
+
+    def windows(series: list[tuple[datetime, int]]) -> dict | None:
+        if not series:
+            return None
+        series.sort()
+        last_t, last_v = series[-1]
+        out = {"current": last_v, "as_of": last_t}
+        for days in (1, 7, 28):
+            cutoff = now - timedelta(days=days)
+            base = next(((t, v) for t, v in reversed(series) if t <= cutoff), None) or series[0]
+            span_h = round((last_t - base[0]).total_seconds() / 3600, 1)
+            if span_h <= 0:
+                out[f"d{days}"] = None
+                continue
+            out[f"d{days}"] = {"change": last_v - base[1], "pct": round((last_v - base[1]) / base[1] * 100, 3) if base[1] else None,
+                               "span_hours": span_h, "full": base[0] <= cutoff}
+        return out
+
+    return {"hidden_subscriber_count": c.hidden_subscriber_count, "subscribers": windows(points["subscriber_count"]),
+            "views": windows(points["view_count"])}
+
+
 @router.get("/assets/{asset_id}/metrics", response_model=list[MetricPoint])
 def metrics(asset_id: int, days: int = Query(default=60, ge=1, le=365), db: Session = Depends(get_db)):
     a, c = _get_asset(db, asset_id)
