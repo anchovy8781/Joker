@@ -150,9 +150,12 @@ def _load_session(db: Session, request: Request) -> UserSession | None:
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         return None
-    session = db.execute(
-        select(UserSession).where(UserSession.token_hash == token_digest(token))
-    ).scalar_one_or_none()
+    # One round trip for the session and its user (require_user's db.get then hits the identity map).
+    row = db.execute(
+        select(UserSession, User).join(User, User.id == UserSession.user_id)
+        .where(UserSession.token_hash == token_digest(token))
+    ).first()
+    session = row[0] if row else None
     if session is None or session.revoked_at is not None or session.expires_at <= utcnow():
         return None
     return session
@@ -182,7 +185,7 @@ def require_user(request: Request, db: Session = Depends(get_db)) -> User:
         sent = request.headers.get(CSRF_HEADER, "")
         if not sent or not hmac.compare_digest(sent, session.csrf_token):
             raise AppError(403, "CSRF_FAILED", "Invalid CSRF token")
-    user = db.get(User, session.user_id)
+    user = db.get(User, session.user_id)  # already in the session's identity map (joined load)
     if user is None or user.status == "suspended" or user.role == "system":
         raise AppError(403, "ACCOUNT_DISABLED", "Account is not allowed to sign in")
     request.state.session = session

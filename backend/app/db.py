@@ -23,10 +23,15 @@ def get_engine() -> Engine:
         s = get_settings()
         _engine = create_engine(
             s.database_url,
-            pool_pre_ping=True,
+            # No pre-ping: it costs a network round trip on every checkout. Connections are
+            # recycled before hosted poolers drop them, and TCP keepalives catch dead ones.
+            pool_pre_ping=False,
+            pool_use_lifo=True,  # reuse the warmest connection; spares can expire
             pool_size=s.db_pool_size,
             max_overflow=s.db_max_overflow,
-            pool_recycle=300,  # hosted poolers close idle connections
+            pool_recycle=120,
+            connect_args={"keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10,
+                          "keepalives_count": 3},
         )
         _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False, autoflush=False)
     return _engine

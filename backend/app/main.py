@@ -4,13 +4,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from app.api import account, admin, auth, internal, market, orders, social
+from app import fastpath
 from app.config import get_settings
 from app.errors import AppError, install_error_handlers
-from app.security import client_ip, hit_rate_limit, ip_hash
+from app.security import client_ip, ip_hash
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -72,17 +74,26 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def request_context(request: Request, call_next):
         request.state.request_id = request.headers.get("x-request-id", "")[:64] or uuid.uuid4().hex
-        if request.url.path.startswith("/api/") and s.env != "test":
-            try:
-                key = f"api:ip:{ip_hash(client_ip(request))}"
-                await run_in_threadpool(hit_rate_limit, key, *s.rl_api_per_ip)
-            except AppError as exc:
+        path = request.url.path
+        if path.startswith("/api/") and s.env != "test":
+            allowed, retry = fastpath.memory_rate_limit(f"api:ip:{ip_hash(client_ip(request))}", *s.rl_api_per_ip)
+            if not allowed:
                 return JSONResponse(status_code=429, content={"error": {
-                    "code": exc.code, "message": exc.message, "details": exc.details,
-                    "request_id": request.state.request_id}})
-        if request.url.path.startswith("/api/"):
+                    "code": "RATE_LIMITED", "message": "Too many requests. Please slow down and try again later.",
+                    "details": {"retry_after_seconds": retry}, "request_id": request.state.request_id}})
+        if path.startswith("/api/"):
             await run_in_threadpool(_refresh_runtime_settings)
-        response = await call_next(request)
+        ttl = fastpath.shared_ttl(path) if request.method == "GET" and s.env != "test" else None
+        key = f"{path}?{request.url.query}"
+        hit = fastpath.cache_get(key) if ttl else None
+        if hit is not None:
+            response = Response(content=hit[1], status_code=hit[0], media_type=hit[2])
+        else:
+            response = await call_next(request)
+            if ttl and response.status_code == 200:
+                body = b"".join([chunk async for chunk in response.body_iterator])
+                fastpath.cache_put(key, ttl, 200, body, response.media_type or "application/json")
+                response = Response(content=body, status_code=200, media_type=response.media_type or "application/json")
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -93,6 +104,7 @@ def create_app() -> FastAPI:
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         return response
 
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=s.cors_origins,

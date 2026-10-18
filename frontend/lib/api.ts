@@ -19,7 +19,24 @@ function readCookie(name: string): string | null {
   return m ? decodeURIComponent(m.slice(name.length + 1)) : null;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function api<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
+  // Reads are safe to repeat: ride out a momentary 502/503/504 from the hosting proxy.
+  const method = init.method ?? (init.body !== undefined ? "POST" : "GET");
+  if (method !== "GET") return request<T>(path, init);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await request<T>(path, init);
+    } catch (e) {
+      const transient = e instanceof ApiError ? [502, 503, 504].includes(e.status) : !(e instanceof ApiError);
+      if (!transient || attempt >= 2) throw e;
+      await sleep(700 * (attempt + 1));
+    }
+  }
+}
+
+async function request<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number }): Promise<T> {
   const method = init.method ?? (init.body !== undefined ? "POST" : "GET");
   const headers: Record<string, string> = { Accept: "application/json" };
   if (method !== "GET") {

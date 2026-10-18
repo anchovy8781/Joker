@@ -1,0 +1,77 @@
+"""Speed-ups for a small single-process deployment far from its database.
+
+Every database statement is a network round trip (100ms+ when the app and Postgres are in
+different regions), so the hot paths avoid the database where it is safe to:
+
+- the per-IP API rate limit is counted in memory (one process serves all requests);
+- public market data that every viewer polls is shared for a second or two instead of
+  being recomputed per viewer.
+"""
+
+import threading
+import time
+
+_lock = threading.Lock()
+_windows: dict[str, tuple[int, int]] = {}
+
+
+def memory_rate_limit(key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
+    """Fixed-window counter. Returns (allowed, seconds until the window resets)."""
+    now = int(time.time())
+    start = now - now % window_seconds
+    with _lock:
+        w, n = _windows.get(key, (start, 0))
+        if w != start:
+            w, n = start, 0
+        n += 1
+        _windows[key] = (w, n)
+        if len(_windows) > 50_000:  # drop old windows
+            for k in [k for k, (ws, _) in _windows.items() if ws != start]:
+                del _windows[k]
+    return n <= limit, window_seconds - now % window_seconds
+
+
+# Public, user-independent GET endpoints → how long one response may be shared (seconds).
+_SHARED = (
+    ("/api/assets/", {"live": 1.0, "orderbook": 1.0, "trades": 1.0, "history": 2.0, "volume-profile": 3.0}),
+    ("/api/assets", 2.0),
+    ("/api/rankings", 3.0),
+    ("/api/market/summary", 3.0),
+    ("/api/market/hours", 10.0),
+    ("/api/leaderboard", 10.0),
+    ("/api/announcements", 15.0),
+)
+_cache: dict[str, tuple[float, int, bytes, str]] = {}
+
+
+def shared_ttl(path: str) -> float | None:
+    for prefix, rule in _SHARED:
+        if isinstance(rule, dict):
+            if path.startswith(prefix):
+                tail = path[len(prefix):].split("/")
+                if len(tail) == 1:
+                    return 2.0  # /api/assets/{id}
+                return rule.get(tail[1])
+        elif path == prefix:
+            return rule
+    return None
+
+
+def cache_get(key: str) -> tuple[int, bytes, str] | None:
+    hit = _cache.get(key)
+    if hit and hit[0] > time.monotonic():
+        return hit[1], hit[2], hit[3]
+    return None
+
+
+def cache_put(key: str, ttl: float, status: int, body: bytes, media_type: str) -> None:
+    if len(_cache) > 2_000:
+        now = time.monotonic()
+        for k in [k for k, v in _cache.items() if v[0] <= now]:
+            _cache.pop(k, None)
+    _cache[key] = (time.monotonic() + ttl, status, body, media_type)
+
+
+def clear() -> None:
+    _cache.clear()
+    _windows.clear()
