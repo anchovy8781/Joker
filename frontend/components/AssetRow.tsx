@@ -20,7 +20,7 @@ export function AssetRow({ a, rank, fav, onFav, right }: {
     <div className="flex items-center gap-3 rounded-3xl bg-panel px-4 py-3 transition-transform active:scale-[0.99]">
       {rank !== undefined && <span className="w-5 text-center text-lg font-bold italic text-muted">{rank}</span>}
       <Link href={`/assets/${a.id}`} className="flex min-w-0 flex-1 items-center gap-3">
-        <ChannelAvatar src={a.channel.thumbnail_url} title={a.channel.title} seed={a.symbol} size={52} />
+        <ChannelAvatar src={a.channel.thumbnail_url} title={a.channel.title} seed={a.symbol} size={44} />
         <div className="min-w-0">
           <div className="truncate text-[15px] font-bold text-text">{channelName(a)}</div>
           <div className="flex items-center gap-1.5 truncate text-sm text-muted">

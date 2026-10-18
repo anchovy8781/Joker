@@ -187,7 +187,7 @@ export function LivePanel({ assetId }: { assetId: number }) {
 
       <h3 className="pt-1 text-sm font-bold text-muted">유튜브 채널 {yt?.source === "demo" && <span className="ml-1 rounded bg-accent/15 px-1 text-[11px] text-accent">DEMO 데이터</span>}</h3>
       {yt?.views === undefined ? (
-        <p className="rounded-xl bg-panel2 px-3 py-3 text-sm text-muted">채널 측정값을 모으는 중이에요 (5분마다 측정).</p>
+        <p className="rounded-xl bg-panel2 px-3 py-3 text-sm text-muted">채널 측정값을 모으는 중이에요 (2분마다 측정).</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -211,7 +211,7 @@ export function LivePanel({ assetId }: { assetId: number }) {
             </div>
           </div>
           <p className="text-xs leading-relaxed text-muted">
-            게임 내 거래 수치는 실제 체결 기준이에요. 유튜브 수치는 무료 API 한도 때문에 5분마다 측정하며
+            게임 내 거래 수치는 실제 체결 기준이에요. 유튜브 수치는 무료 API 한도 때문에 2분마다 측정하며
             (마지막 측정 {timeAgo(yt.observed_at)}), &lsquo;추정&rsquo;은 최근 증가 속도로 계산한 값이에요.
           </p>
         </>

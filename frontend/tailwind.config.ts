@@ -18,6 +18,11 @@ export default {
         down: "#3182f6",
         accent: "#f59e0b",
       },
+      // Slightly larger small print than Tailwind's defaults (12/14px): easier to read on phones.
+      fontSize: {
+        xs: ["0.8125rem", { lineHeight: "1.15rem" }],
+        sm: ["0.9375rem", { lineHeight: "1.4rem" }],
+      },
       fontFamily: {
         sans: ["Pretendard Variable", "Pretendard", "-apple-system", "BlinkMacSystemFont", "system-ui", "Apple SD Gothic Neo", "Noto Sans KR", "sans-serif"],
         // Numbers use the same face with tabular figures (see globals.css) instead of a code font.

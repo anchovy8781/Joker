@@ -162,7 +162,7 @@ export default function AssetPage() {
 
           <Card title="채널 공개 지표" right={<span className="text-xs text-muted">{a.is_demo ? "데모 공급자 생성값" : "YouTube Data API 공개 통계"}</span>}>
             <ChannelGrowth assetId={a.id} fallback={{ subscribers: latest?.subscriber_count ?? null, views: latest?.view_count ?? null }} />
-            <p className="mt-3 text-xs text-muted">변화량은 5분마다 모은 기록과 일별 기록으로 계산해요. 기록이 기간보다 짧으면 상장 후 기간 기준으로 보여 줘요. 데이터 품질: {a.channel.data_quality_status}</p>
+            <p className="mt-3 text-xs text-muted">변화량은 2분마다 모은 기록과 일별 기록으로 계산해요. 기록이 기간보다 짧으면 있는 기록의 기간 기준으로 보여 줘요. YouTube는 구독자 수를 앞 3자리까지만 반올림해 공개해서, 구독자 변화는 계단식으로 보일 수 있어요. 데이터 품질: {a.channel.data_quality_status}</p>
           </Card>
 
           <div className="grid gap-4 md:grid-cols-2">

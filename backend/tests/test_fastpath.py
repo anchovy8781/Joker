@@ -47,3 +47,14 @@ def test_bots_wait_for_player_orders_but_not_forever():
     fastpath.order_finished()
     t = time.monotonic(); fastpath.wait_for_players(2.0)
     assert time.monotonic() - t < 0.1
+
+
+def test_stale_entries_are_served_within_grace():
+    import time
+
+    fastpath.clear()
+    fastpath.cache_put("k", 0.0, 200, b"old", "application/json")
+    assert fastpath.cache_get("k") is None
+    assert fastpath.cache_get_stale("k", 1.0) == (200, b"old", "application/json")
+    fastpath._cache["k"] = (time.monotonic() - 60, 200, b"old", "application/json")
+    assert fastpath.cache_get_stale("k", 1.0) is None

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -49,6 +50,20 @@ def _refresh_runtime_settings() -> None:
         db.close()
 
 
+async def _refresh_shared(app: FastAPI, key: str) -> None:
+    """Recompute one shared public response in the background (it stores itself in the
+    cache on the way out through the middleware)."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://internal", timeout=30) as c:
+            await c.get(key, headers={"x-ytx-refresh": fastpath.REFRESH_TOKEN})
+    except Exception:
+        logging.getLogger("yex").warning("background refresh of %s failed", key, exc_info=True)
+    finally:
+        fastpath.refreshing.discard(key)
+
+
 def create_app() -> FastAPI:
     s = get_settings()
     if s.is_production:
@@ -75,7 +90,7 @@ def create_app() -> FastAPI:
     async def request_context(request: Request, call_next):
         request.state.request_id = request.headers.get("x-request-id", "")[:64] or uuid.uuid4().hex
         path = request.url.path
-        if path.startswith("/api/") and s.env != "test":
+        if path.startswith("/api/") and s.env != "test" and request.headers.get("x-ytx-refresh") != fastpath.REFRESH_TOKEN:
             allowed, retry = fastpath.memory_rate_limit(f"api:ip:{ip_hash(client_ip(request))}", *s.rl_api_per_ip)
             if not allowed:
                 return JSONResponse(status_code=429, content={"error": {
@@ -86,7 +101,13 @@ def create_app() -> FastAPI:
             await run_in_threadpool(_refresh_runtime_settings)
         ttl = fastpath.shared_ttl(path) if request.method == "GET" and s.env != "test" else None
         key = f"{path}?{request.url.query}"
-        hit = fastpath.cache_get(key) if ttl else None
+        internal = request.headers.get("x-ytx-refresh") == fastpath.REFRESH_TOKEN
+        hit = fastpath.cache_get(key) if ttl and not internal else None
+        if hit is None and ttl and not internal:
+            hit = fastpath.cache_get_stale(key, ttl)
+            if hit is not None and key not in fastpath.refreshing:
+                fastpath.refreshing.add(key)
+                asyncio.get_running_loop().create_task(_refresh_shared(app, key))
         if hit is not None:
             response = Response(content=hit[1], status_code=hit[0], media_type=hit[2])
         else:

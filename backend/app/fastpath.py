@@ -65,6 +65,21 @@ def cache_get(key: str) -> tuple[int, bytes, str] | None:
     return None
 
 
+def cache_get_stale(key: str, ttl: float) -> tuple[int, bytes, str] | None:
+    """An expired entry that is still recent enough to show while a fresh one is computed
+    (stale-while-revalidate): viewers never wait on the database for public market data."""
+    hit = _cache.get(key)
+    grace = min(30.0, max(5.0, ttl * 10))
+    if hit and hit[0] + grace > time.monotonic():
+        return hit[1], hit[2], hit[3]
+    return None
+
+
+# Background refreshes in flight (one per key), and the secret that marks them as ours.
+refreshing: set[str] = set()
+REFRESH_TOKEN = __import__("secrets").token_hex(16)
+
+
 def cache_put(key: str, ttl: float, status: int, body: bytes, media_type: str) -> None:
     if len(_cache) > 2_000:
         now = time.monotonic()

@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     price_alerts_max_active: int = 20  # each level offers 0.5% of remaining inventory
 
     # Live channel statistics (cheap channels.list call, 1 quota unit per 50 channels).
-    live_stats_interval_minutes: int = 5
+    live_stats_interval_minutes: int = 2  # YouTube stats sample (1 quota unit per 50 channels per run)
     live_samples_keep_days: int = 7
 
     # Trading sessions (Korea time). Disable only for tests/local experiments.
