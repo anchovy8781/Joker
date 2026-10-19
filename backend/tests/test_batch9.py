@@ -16,15 +16,15 @@ def test_amend_moves_price_and_quantity(make_user, db, asset):
     r = u.order(asset, "buy", 10, price=low)
     assert r.status_code == 201 and r.json()["order"]["status"] == "open", r.text
     oid = r.json()["order"]["id"]
-    a = u.post(f"/api/orders/{oid}/amend", json={"limit_price": low + 1, "quantity": 7, "idempotency_key": "amend-0001"})
+    a = u.post(f"/api/orders/{oid}/amend", json={"limit_price": low + 10, "quantity": 7, "idempotency_key": "amend-0001"})
     assert a.status_code == 200, a.text
     new = a.json()["order"]
-    assert new["id"] != oid and new["limit_price"] == low + 1 and new["quantity"] == 7 and new["status"] == "open"
+    assert new["id"] != oid and new["limit_price"] == low + 10 and new["quantity"] == 7 and new["status"] == "open"
     db.expire_all()
     old = db.get(Order, oid)
     assert old.status == "canceled" and old.status_reason == "USER_AMENDED"
     # a retry returns the same replacement, never a second one
-    again = u.post(f"/api/orders/{oid}/amend", json={"limit_price": low + 1, "quantity": 7, "idempotency_key": "amend-0001"})
+    again = u.post(f"/api/orders/{oid}/amend", json={"limit_price": low + 10, "quantity": 7, "idempotency_key": "amend-0001"})
     assert again.status_code == 200 and again.json()["order"]["id"] == new["id"] and again.json()["replayed"]
     # amending into the book fills it
     fill = u.post(f"/api/orders/{new['id']}/amend", json={"limit_price": price * 105 // 100, "idempotency_key": "amend-0002"})
@@ -76,7 +76,7 @@ def test_amend_key_reuse_for_another_order_is_refused(make_user, db, asset):
     low = db.get(MarketAsset, asset).current_price * 90 // 100
     a = u.order(asset, "buy", 3, price=low).json()["order"]["id"]
     b = u.order(asset, "buy", 4, price=low).json()["order"]["id"]
-    assert u.post(f"/api/orders/{a}/amend", json={"limit_price": low + 1, "idempotency_key": "amend-k-01"}).status_code == 200
+    assert u.post(f"/api/orders/{a}/amend", json={"limit_price": low + 10, "idempotency_key": "amend-k-01"}).status_code == 200
     r = u.post(f"/api/orders/{b}/amend", json={"limit_price": low + 2, "idempotency_key": "amend-k-01"})
     assert r.status_code == 409
 
@@ -157,7 +157,7 @@ def test_spoof_bid_is_placed_then_withdrawn_and_shakeout_dumps(db, asset, monkey
     assert reconciliation.reconcile(db).status == "ok"
 
 
-def test_bot_league_rewards_winners_and_desks_learn(make_user, db, asset):
+def test_bot_league_rewards_winners_and_desks_learn(make_user, make_admin, db, asset):
     import random as _r
     from datetime import UTC, datetime
 
@@ -193,7 +193,8 @@ def test_bot_league_rewards_winners_and_desks_learn(make_user, db, asset):
     assert bot_league.probabilities("외국인_헤지펀드", "foreign")["value"] > max(p0, 0.6)
     bot_league.save(db)
     db.commit()
-    table = make_user().get("/api/bots/league").json()
+    assert make_user().get("/api/admin/bots/league").status_code == 403  # players never see the league
+    table = make_admin().get("/api/admin/bots/league").json()
     assert table["bots"] and any(r.get("strategy") for r in table["bots"])
     row = next(r for r in table["bots"] if r["name"] == winner.username)
     assert row["rewards"] > 0 and row["podiums"] == 1

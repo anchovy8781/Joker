@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { OrderBookView } from "@/components/OrderBookView";
 import { OrderPanel } from "@/components/OrderPanel";
@@ -100,7 +100,7 @@ export default function AssetPage() {
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <PriceTicker price={a.current_price} />
         <Change value={a.change} percent={a.change_pct} />
-        <span className="text-xs text-muted">기준가 {credits(a.reference_price)} · 전일 {credits(a.previous_price)} · 인기도 {a.popularity_score ?? "—"}/50 {popularityLabel(a.popularity_score)}</span>
+        <span className="text-xs text-muted">기준가 {credits(a.reference_price)} · 상한가 <span className="text-up">{credits(a.upper_limit)}</span> · 하한가 <span className="text-down">{credits(a.lower_limit)}</span> · 인기도 {a.popularity_score ?? "—"}/50 {popularityLabel(a.popularity_score)}</span>
       </div>
       <div className="flex gap-2 lg:hidden">
         <a href="#order-card" onClick={() => { setPanel("order"); setSideReq({ side: "buy", n: Date.now() }); }}
@@ -120,6 +120,7 @@ export default function AssetPage() {
           {a.fee_surcharge_until && ` (${dateTime(a.fee_surcharge_until)}까지)`} · 손실 매도 시 매도 수수료 면제
         </div>
       )}
+      <ViBanner a={a} />
       {a.trading_status !== "active" && (
         <div role="alert" className="rounded-xl border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm text-red-200">
           ⏸ 거래 정지: {a.halt_reason?.replace(/^AUTO:/, "자동 정지 · ")}
@@ -267,4 +268,29 @@ function Metric({ label, value }: { label: string; value: string }) {
 function PriceTicker({ price }: { price: number }) {
   const flash = usePriceFlash(price);
   return <span className={`px-1 text-3xl font-bold tabular-nums ${flash}`}>₩{credits(price)}</span>;
+}
+
+/** 변동성완화장치 (VI) countdown, or a 상한가/하한가 notice when the price sits at the limit. */
+function ViBanner({ a }: { a: Asset }) {
+  const [now, setNow] = useState(() => Date.now());
+  const until = a.vi_until ? new Date(a.vi_until).getTime() : 0;
+  useEffect(() => {
+    if (until <= Date.now()) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [until]);
+  if (until > now) {
+    const left = Math.ceil((until - now) / 1000);
+    return (
+      <div role="status" className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-2 text-sm">
+        ⚡ <b>{a.vi_kind === "static" ? "정적" : "동적"} VI 발동</b> · 단일가 매매 중 ({Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} 남음)
+        <div className="text-xs text-muted">가격이 급하게 움직여 2분간 주문을 모은 뒤 한 가격으로 체결합니다. 그동안 즉시 체결은 없어요.</div>
+      </div>
+    );
+  }
+  if (a.upper_limit && a.current_price >= a.upper_limit)
+    return <div className="rounded-xl bg-up/10 px-4 py-2 text-sm font-semibold text-up">🔺 상한가 · 오늘은 더 오를 수 없어요</div>;
+  if (a.lower_limit && a.current_price <= a.lower_limit)
+    return <div className="rounded-xl bg-down/10 px-4 py-2 text-sm font-semibold text-down">🔻 하한가 · 오늘은 더 내릴 수 없어요</div>;
+  return null;
 }

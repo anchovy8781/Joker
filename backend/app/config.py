@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     market_order_max_deviation_bps: int = 500
     limit_band_bps: int = 3000  # daily price limit: ±30% of the reference price (KRX-style)
     low_liquidity_band_bps: int = 2000  # tighter band for assets that barely traded
+    # 변동성완화장치 (VI): a 2-minute call auction after a sharp move (see services/krx.py)
+    vi_enabled: bool = True
+    vi_static_bps: int = 1000  # 정적 VI: ±10% from today's reference (or the last VI price)
+    vi_dynamic_bps: int = 300  # 동적 VI: ±3% from about a minute earlier
+    vi_seconds: int = 120
     low_liquidity_daily_trades: int = 5
 
     # Market maker (IPO inventory provider). It only trades with its own inventory and cash.

@@ -24,7 +24,7 @@ from app.config import get_settings
 from app.errors import AppError
 from app.models import Account, Channel, MarketAsset, Order, Position, Trade, User
 from app.security import utcnow
-from app.services import bars, market_hours
+from app.services import bars, krx, market_hours
 from app.services.fees import bps_down, bps_up, buy_reservation, fee_for, fee_policy
 from app.services.ledger import lock_accounts, post_entry
 from app.services.notify import notify
@@ -146,11 +146,15 @@ def _protect_price(db: Session, asset: MarketAsset, side: str, order_type: str, 
     s = get_settings()
     ref = asset.reference_price
     if order_type == "limit":
-        band = price_band(db, asset)
-        lo, hi = max(s.min_price, bps_down(ref, band)), bps_up(ref, band)
+        lo, hi = krx.limits(ref, price_band(db, asset))  # 하한가 / 상한가 on the tick grid
         if not (lo <= limit_price <= hi):  # type: ignore[operator]
-            raise AppError(422, "PRICE_OUT_OF_BAND", f"Limit price must be between {lo} and {hi}",
+            raise AppError(422, "PRICE_OUT_OF_BAND", f"주문 가격은 하한가 {lo:,} ~ 상한가 {hi:,} 사이여야 해요",
                            {"min": lo, "max": hi})
+        if not krx.on_tick(limit_price):  # type: ignore[arg-type]
+            tick = krx.tick_size(limit_price)  # type: ignore[arg-type]
+            down, up = krx.floor_tick(limit_price), krx.ceil_tick(limit_price)  # type: ignore[arg-type]
+            raise AppError(422, "INVALID_TICK", f"이 가격대의 호가단위는 {tick:,}원이에요 ({down:,} 또는 {up:,})",
+                           {"tick": tick, "down": down, "up": up})
         return limit_price  # type: ignore[return-value]
     # Market orders: within ±dev of the last traded price, never outside the daily band.
     dev = s.market_order_max_deviation_bps
@@ -207,6 +211,10 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
     # Fee rate is fixed now (surcharge windows may open/close while the order rests).
     fee_bps = fee_policy(asset, now).bps
     market_open = market_hours.is_open(now)
+    if market_open and krx.vi_due(asset, now):  # the call auction is over: cross it first
+        krx.end_vi(db, asset, now)
+    in_auction = market_open and krx.in_vi(asset, now)
+    market_open = market_open and not in_auction  # during a VI orders wait for the auction
 
     if market_open:
         makers, self_trade_blocked, depth_exhausted = _collect_makers(
@@ -267,6 +275,14 @@ def place_order(db: Session, user: User, req: OrderRequest) -> PlaceResult:
         assert pos is not None
         pos.reserved_quantity += req.quantity
 
+    if in_auction:
+        order.status_reason = krx.VI_REASON
+        db.flush()
+        if user.role != "bot":
+            notify(db, user.id, "order_scheduled", f"{asset.symbol} VI 발동 · 단일가 매매 중",
+                   f"주문이 접수됐어요. {asset.vi_until.astimezone(krx.KST).strftime('%H:%M:%S')}에 한 가격으로 체결됩니다 · 주문 #{order.id}",
+                   f"/assets/{asset.id}")
+        return PlaceResult(order=order)
     if not market_open:
         order.status_reason = "RESERVED_UNTIL_OPEN"
         db.flush()
@@ -309,6 +325,8 @@ def _match_and_finalize(db, asset, order, makers, self_trade_blocked, depth_exha
     order.updated_at = now
     db.flush()
     _notify_fills(db, asset, order, trades)
+    if trades:
+        krx.check_vi(db, asset, now)  # a sharp move starts a 변동성완화장치 call auction
     return trades
 
 
@@ -323,6 +341,9 @@ def activate_scheduled(db: Session, order_id: int) -> list[Trade]:
     if order.status != "scheduled" or asset.trading_status != "active":
         return []  # halted assets keep their reservations until trading resumes
     now = utcnow()
+    if krx.in_vi(asset, now):  # joins the running call auction instead
+        order.status_reason = krx.VI_REASON
+        return []
     try:
         protect = _protect_price(db, asset, order.side, order.order_type, order.limit_price)
     except AppError:

@@ -60,6 +60,7 @@ const REASONS: Record<string, string> = {
   USER_CANCELED: "사용자 취소",
   MATCH_DEPTH_LIMIT: "한 번에 체결 가능한 주문 수를 초과해 잔량이 취소되었습니다",
   RESERVED_UNTIL_OPEN: "장 시작 시 접수 순서대로 제출됩니다",
+  VI_CALL_AUCTION: "VI 발동 · 단일가 매매로 모아서 한 가격에 체결됩니다",
   OUT_OF_BAND_AT_OPEN: "장 시작 시 지정가가 가격 제한 범위를 벗어나 취소되었습니다",
 };
 export const reasonLabel = (r: string | null) => (r ? REASONS[r] ?? r : "");

@@ -494,6 +494,14 @@ def resume_all(body: ReasonIn, request: Request, admin: User = Depends(require_a
     return {"resumed": len(resumed), "failed": failed}
 
 
+@router.get("/bots/league")
+def bot_league_table(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """봇 리그 (operators only — players never see it): bots ranked by return, rewards, learned strategies."""
+    from app.services import bot_league
+
+    return bot_league.standings(db)
+
+
 @router.get("/overview")
 def overview(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     """운영 현황 at a glance."""

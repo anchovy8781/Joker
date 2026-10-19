@@ -14,9 +14,9 @@ type League = { bots: Row[]; last_eval: string | null; history: { at: string; to
 const MEDAL = ["🥇", "🥈", "🥉"];
 const GROUP_TONE: Record<string, string> = { 개인: "bg-gray-500/15", 기관: "bg-blue-500/15", 외국인: "bg-emerald-500/15", 세력: "bg-red-500/15" };
 
-/** 봇 리그: virtual traders ranked by return; winners get rewards and more order flow. */
+/** 봇 리그 (operators only): virtual traders ranked by return; winners get rewards and more order flow. */
 export function BotLeague() {
-  const { data, error } = useApi<League>("/api/bots/league", 30_000);
+  const { data, error } = useApi<League>("/api/admin/bots/league", 30_000);
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Empty>불러오는 중…</Empty>;
   if (!data.bots.length) return <Empty>아직 봇이 없습니다</Empty>;

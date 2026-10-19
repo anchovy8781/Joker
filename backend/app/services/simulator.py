@@ -48,6 +48,10 @@ def _round() -> None:
     started = time.monotonic()
     try:
         runtime_settings.refresh(db)
+        from app.security import utcnow
+        from app.services import krx
+
+        krx.settle_due(db, utcnow())  # VI call auctions end on time even with the bots off
         if not get_settings().bots_enabled:  # switched off by an administrator
             return
         if time.monotonic() - _last_persona_round >= get_settings().bot_persona_interval_seconds:

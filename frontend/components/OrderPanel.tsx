@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, newIdempotencyKey, type Asset, type Order, type Trade } from "@/lib/api";
 import { buzz, toast } from "@/lib/feedback";
 import { credits, estimateFee, orderStatusLabel, reasonLabel } from "@/lib/format";
+import { roundTick, stepTick, tickSize } from "@/lib/krx";
 
 type Result = { order: Order; fills: Trade[]; replayed: boolean };
 
@@ -48,7 +49,11 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
     ? Math.floor((availableCash ?? 0) / (unitPrice + Math.ceil((unitPrice * asset.fee_bps) / 10000)))
     : availableShares ?? 0;
   const fill = (fraction: number) => setQty(String(Math.max(fraction === 1 ? maxQty : 1, Math.floor(maxQty * fraction))));
-  const nudge = (bps: number) => setPrice(String(Math.max(1, Math.round((Number.isInteger(p) && p > 0 ? p : asset.current_price) * (1 + bps / 10000)))));
+  // Prices move on the 호가단위 grid, never past 상한가/하한가.
+  const clamp = (v: number) => Math.min(asset.upper_limit || v, Math.max(asset.lower_limit || 1, v));
+  const nudge = (dir: 1 | -1) => setPrice(String(clamp(stepTick(roundTick(Number.isInteger(p) && p > 0 ? p : asset.current_price), dir))));
+  const offTick = type === "limit" && Number.isInteger(p) && p > 0 && p % tickSize(p) !== 0;
+  const inVi = !!asset.vi_until && new Date(asset.vi_until).getTime() > Date.now();
 
   const halted = asset.trading_status !== "active";
 
@@ -105,11 +110,19 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
       </div>
       {type === "limit" && (
         <label className="block text-xs text-muted">가격 (크레딧)
-          <input className="input mt-1" inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/\D/g, ""))} aria-label="지정가" />
-          <span className="mt-1.5 flex gap-1.5">
-            <button type="button" className="chip flex-1 px-2 py-1.5 text-xs" onClick={() => nudge(-100)}>−1%</button>
-            <button type="button" className="chip flex-1 px-2 py-1.5 text-xs" onClick={() => setPrice(String(asset.current_price))}>현재가</button>
-            <button type="button" className="chip flex-1 px-2 py-1.5 text-xs" onClick={() => nudge(100)}>+1%</button>
+          <input className="input mt-1" inputMode="numeric" value={price} onChange={(e) => setPrice(e.target.value.replace(/\D/g, ""))}
+            onBlur={() => { if (offTick) setPrice(String(clamp(roundTick(p)))); }} aria-label="지정가" />
+          <span className="mt-1.5 grid grid-cols-5 gap-1">
+            {asset.lower_limit > 0 && <button type="button" className="chip px-1 py-1.5 text-[11px] text-down" onClick={() => setPrice(String(asset.lower_limit))}>하한가</button>}
+            <button type="button" className="chip px-1 py-1.5 text-xs" onClick={() => nudge(-1)} aria-label="한 호가 내리기">−호가</button>
+            <button type="button" className="chip px-1 py-1.5 text-xs" onClick={() => setPrice(String(asset.current_price))}>현재가</button>
+            <button type="button" className="chip px-1 py-1.5 text-xs" onClick={() => nudge(1)} aria-label="한 호가 올리기">+호가</button>
+            {asset.upper_limit > 0 && <button type="button" className="chip px-1 py-1.5 text-[11px] text-up" onClick={() => setPrice(String(asset.upper_limit))}>상한가</button>}
+          </span>
+          <span className="mt-1 block">
+            호가단위 {credits(tickSize(Number.isInteger(p) && p > 0 ? p : asset.current_price))}원
+            {asset.lower_limit > 0 && <> · 가격범위 {credits(asset.lower_limit)} ~ {credits(asset.upper_limit)}</>}
+            {offTick && <span className="text-amber-500"> · 호가단위에 맞지 않아요</span>}
           </span>
         </label>
       )}
@@ -132,6 +145,7 @@ export function OrderPanel({ asset, availableCash, availableShares, pickedPrice,
         </>}
         <p className="pt-1 text-xs">실제 체결가와 수수료는 서버가 계산합니다. {type === "market" && "시장가는 기준가 ±5% 범위에서만 체결되고 잔량은 취소됩니다."}
           {surcharge && side === "sell" && " 할증 종목을 손실 매도하면 매도 수수료가 면제됩니다."}</p>
+        {inVi && <p className="pt-1 text-xs text-amber-500">⚡ 변동성완화장치(VI) 발동 — 2분간 주문을 모아 한 가격(단일가)으로 체결합니다.</p>}
         {!marketOpen && <p className="pt-1 text-xs text-amber-300">◐ 장마감 중 — 예약 주문으로 접수되어 다음 장 시작 시 접수 순서대로 제출됩니다.</p>}
       </div>
       {!loggedIn ? (

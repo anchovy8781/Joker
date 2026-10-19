@@ -36,7 +36,7 @@ from app.config import get_settings
 from app.errors import AppError
 from app.models import Account, Channel, LedgerEntry, MarketAsset, MarketBar, Position, Trade, User
 from app.security import utcnow
-from app.services import bot_league, intraday, market_hours
+from app.services import bot_league, intraday, krx, market_hours
 from app.services.fees import bps_down, bps_up
 from app.services.ledger import lock_account, post_entry
 from app.services.listing import fund_market_maker, get_market_maker, requote_market_maker
@@ -379,7 +379,7 @@ def _order(db: Session, bot: User, asset: MarketAsset, side: str, value: float, 
     qty = min(qty, get_settings().max_order_quantity)
     if rng.random() < PASSIVE_P.get(kind, 0.3):  # passive: a limit order near the touch adds depth
         bps = rng.randint(0, 40)
-        limit = bps_down(price, bps) if side == "buy" else bps_up(price, bps)
+        limit = krx.floor_tick(bps_down(price, bps)) if side == "buy" else krx.ceil_tick(bps_up(price, bps))
         req = OrderRequest(asset.id, side, "limit", qty, limit, f"bot:{uuid.uuid4().hex}")
     else:
         req = OrderRequest(asset.id, side, "market", qty, None, f"bot:{uuid.uuid4().hex}")
@@ -503,6 +503,12 @@ def _desk_view(asset: MarketAsset, name: str, kind: str, now: datetime) -> float
     return d["bias"]
 
 
+def _minute_ago(asset_id: int, now: datetime) -> int | None:
+    """The price about a minute ago, from the heartbeat's own memory (동적 VI reference)."""
+    h = _hist.get(asset_id)
+    return next((p for t, p in h if now - t <= timedelta(seconds=70)), None) if h else None
+
+
 def _pick(group: list[User], rng: random.Random) -> User:
     """Order flow goes to bots in proportion to their conviction (봇 리그): winners trade more."""
     return rng.choices(group, weights=[bot_league.conviction(b.username) for b in group])[0]
@@ -558,7 +564,7 @@ def _spoof(db: Session, asset: MarketAsset, whales: list[User], now: datetime) -
     if sp or not whales or whale_phase(asset.id, now)[0] != "distribute" or _sysrand.random() > 0.012:
         return
     whale = _sysrand.choice(whales)
-    price = bps_down(max(1, asset.current_price), _sysrand.randint(50, 120))
+    price = krx.floor_tick(bps_down(max(1, asset.current_price), _sysrand.randint(50, 120)))
     qty = max(1, int(get_settings().mm_level_value * _sysrand.uniform(3, 6) // price))
     try:
         with db.begin_nested():
@@ -581,6 +587,16 @@ def _tape_asset(db: Session, asset: MarketAsset, crowd: dict[str, list[User]], r
     many went through. `held` and `cash` are this tick's snapshot of the bots' free shares
     and cash (read once per tick, then adjusted locally) so an order costs one database call."""
     orders = 0
+    if asset.vi_until is not None:  # 변동성완화장치: no continuous trading until the auction is crossed
+        if krx.vi_due(asset, now):
+            from app.services.orders import lock_asset
+
+            locked = lock_asset(db, asset.id)
+            if krx.vi_due(locked, now):
+                krx.end_vi(db, locked, now)
+            db.commit()
+            _maybe_requote(db, locked, now, True, True, steps=0)
+        return 0
     _spoof(db, asset, crowd.get("whale", []), now)
     price = max(1, asset.current_price)
     h = _hist.setdefault(asset.id, deque(maxlen=400))
@@ -627,6 +643,14 @@ def _tape_asset(db: Session, asset: MarketAsset, crowd: dict[str, list[User]], r
         # Commit every fill: the next wait_for_players() must not hold the asset and market-maker
         # rows that a person's order needs.
         db.commit()
+        if ok and krx.would_trigger(asset, now, _minute_ago(asset.id, now)):
+            from app.services.orders import lock_asset
+
+            locked = lock_asset(db, asset.id)
+            krx.check_vi(db, locked, now, _minute_ago(asset.id, now))
+            db.commit()
+            if locked.vi_until is not None:
+                return orders + 1  # VI: the rest of this tick's flow waits for the auction
         if ok:
             orders += 1
             if kind == "whale":
@@ -725,7 +749,7 @@ def run_round(db: Session, now: datetime | None = None, rng: random.Random | Non
     deadline = time.monotonic() + s.bot_round_budget_seconds
     orders = 0
     touched: set[int] = set()
-    for asset in assets[:8]:
+    for asset in [a for a in assets if a.vi_until is None][:8]:  # a stock in VI waits for its auction
         ctx = {"ret_10m": _ret_10m(db, asset.id, now), "fair": max(1, intraday.fair_price(asset)),
                "whale": whale_phase(asset.id, now), "top_quality": top_quality,
                "yt_bps": (asset.intraday_detail or {}).get("yt_bps", 0)}

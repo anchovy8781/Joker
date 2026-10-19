@@ -209,14 +209,6 @@ def orderbook(asset_id: int, depth: int = Query(default=10, ge=1, le=50), db: Se
     return OrderBookOut(asset_id=asset_id, bids=side("buy", True), asks=side("sell", False))
 
 
-@router.get("/bots/league")
-def bot_league_table(db: Session = Depends(get_db)):
-    """봇 리그: the virtual traders ranked by return, their rewards and learned strategies."""
-    from app.services import bot_league
-
-    return bot_league.standings(db)
-
-
 @router.get("/assets/{asset_id}/flows")
 def flows(asset_id: int, days: int = Query(default=5, ge=1, le=20), db: Session = Depends(get_db)):
     """수급: net buying (shares and credits) by investor group per Korean trading day.

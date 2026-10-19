@@ -205,6 +205,11 @@ class MarketAsset(Base):
     intraday_adj_bps: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     intraday_detail: Mapped[dict | None] = mapped_column(JSONB)
     intraday_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 변동성완화장치: a call auction runs until vi_until (see services/krx.py)
+    vi_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vi_kind: Mapped[str | None] = mapped_column(String(8))  # 'static' | 'dynamic'
+    vi_base: Mapped[int | None] = mapped_column(BigInteger)  # static-VI base after a VI today
+    vi_last_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     created_at: Mapped[datetime] = _now()
 

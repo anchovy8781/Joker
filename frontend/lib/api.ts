@@ -139,6 +139,11 @@ export type Asset = {
   freshness: Freshness;
   is_demo: boolean;
   sparkline: number[];
+  tick_size: number; // 호가단위
+  upper_limit: number; // 상한가
+  lower_limit: number; // 하한가
+  vi_until: string | null; // 변동성완화장치: 단일가 매매 until
+  vi_kind: "static" | "dynamic" | null;
 };
 
 export type Bar = { timestamp: string; open_price: number; high_price: number; low_price: number; close_price: number; volume: number };

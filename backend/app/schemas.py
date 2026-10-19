@@ -88,6 +88,11 @@ class AssetOut(BaseModel):
     fee_surcharge_until: datetime | None
     freshness: FreshnessOut
     is_demo: bool
+    tick_size: int = 1  # 호가단위 at the current price
+    upper_limit: int = 0  # 상한가
+    lower_limit: int = 0  # 하한가
+    vi_until: datetime | None = None  # 변동성완화장치: call auction until this time
+    vi_kind: str | None = None  # 'static' | 'dynamic'
 
 
 class MetricPoint(BaseModel):

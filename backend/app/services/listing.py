@@ -424,8 +424,12 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
     from app.services.orders import price_band
 
     s = get_settings()
+    from app.services import krx
+
     mm = get_market_maker(db)
     asset = lock_asset(db, asset_id)
+    if asset.vi_until is not None:  # VI call auction: the ladder stays as it is until it is crossed
+        return {"canceled": 0, "placed": 0}
     canceled = _bulk_cancel_mm(db, asset_id, mm.id, "MM_REQUOTE")
     placed = 0
     now = utcnow()
@@ -435,8 +439,7 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
     fair = intraday.fair_price(asset)
     last = asset.current_price or asset.reference_price
     centre = (last * s.mm_follow_bps + fair * (10_000 - s.mm_follow_bps)) // 10_000
-    band = price_band(db, asset)
-    lo, hi = max(s.min_price, bps_down(asset.reference_price, band)), bps_up(asset.reference_price, band)
+    lo, hi = krx.limits(asset.reference_price, price_band(db, asset))  # 하한가 / 상한가
     centre = min(max(centre, lo), hi)
     fund_market_maker(db, mm)
     account = lock_account(db, mm.id)
@@ -451,10 +454,13 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
     fee_bps = fee_policy(asset, now).bps
     rows: list[Order] = []
     crossing: list[OrderRequest] = []
+    prev_ask = prev_bid = centre
     for k in range(s.mm_levels):
         offset = s.mm_half_spread_bps + k * s.mm_step_bps
         size_value = s.mm_level_value * (2 + k) // 2  # deeper levels hold a little more
-        ask = bps_up(centre, offset)
+        # quotes sit on the 호가단위 grid, at least one tick apart
+        ask = max(krx.ceil_tick(bps_up(centre, offset)), krx.step(prev_ask, 1) if k else krx.ceil_tick(centre + 1))
+        prev_ask = ask
         if inventory > 0 and ask <= hi:
             qty = min(inventory, max(1, size_value // ask), s.max_order_quantity)
             inventory -= qty
@@ -463,7 +469,8 @@ def requote_market_maker(db: Session, asset_id: int) -> dict:
                 crossing.append(req)
             else:
                 rows.append(_resting(mm.id, req, fee_bps, 0))
-        bid = bps_down(centre, offset)
+        bid = min(krx.floor_tick(bps_down(centre, offset)), krx.step(prev_bid, -1) if k else krx.floor_tick(centre))
+        prev_bid = bid
         if bid >= lo:
             qty = min(max(1, size_value // bid), s.max_order_quantity)
             cost = buy_reservation(qty, bid, fee_bps)

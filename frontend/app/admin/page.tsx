@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
+import { BotLeague } from "@/components/BotLeague";
 import { ChannelAvatar } from "@/components/ChannelAvatar";
 import { ChannelPicker } from "@/components/ChannelPicker";
 import type { ChannelPreviewData } from "@/components/ChannelPreview";
@@ -19,7 +20,7 @@ type Recon = { id: number; status: string; checked_accounts: number; mismatches:
 type PU = { id: number; symbol: string; effective_date: string; status: string; old_price: number; new_price: number; error: string | null };
 type Ticket = { id: number; status: string; reason?: string; message?: string; target_type?: string; target_id?: string | null; user_id?: number; created_at: string; resolution: string | null };
 
-const TABS = [["overview", "운영 현황"], ["listing", "상장 승인"], ["users", "사용자"], ["settings", "⚙ 설정"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
+const TABS = [["overview", "운영 현황"], ["listing", "상장 승인"], ["users", "사용자"], ["bots", "🤖 봇 리그"], ["settings", "⚙ 설정"], ["chat", "채팅 관리"], ["risk", "위험 이벤트"], ["audit", "감사 로그"], ["jobs", "작업·가격 갱신"], ["recon", "원장 대사"], ["tickets", "신고·이의"], ["notice", "공지"]] as const;
 
 export default function AdminPage() {
   const { user, ready } = useAuth();
@@ -40,6 +41,7 @@ export default function AdminPage() {
       {tab === "overview" && <Overview go={(t) => setTab(t)} />}
       {tab === "listing" && <Listing />}
       {tab === "users" && <Users />}
+      {tab === "bots" && <Card title="봇 리그 (운영자 전용 · 사용자에게는 보이지 않음)"><BotLeague /></Card>}
       {tab === "settings" && <SettingsTab />}
       {tab === "risk" && <Risk />}
       {tab === "audit" && <AuditTab />}

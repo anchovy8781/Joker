@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.models import Channel, MarketAsset, MarketBar, Order, Trade
 from app.schemas import AssetOut, ChannelOut, FreshnessOut, OrderOut
 from app.security import utcnow
+from app.services import krx
 from app.services.fees import fee_policy
 
 
@@ -63,6 +64,9 @@ def asset_out(asset: MarketAsset, channel: Channel, act: tuple[int, int, int] = 
               spark: list[int] | None = None) -> AssetOut:
     policy = fee_policy(asset, utcnow())
     change = asset.current_price - asset.previous_price
+    s = get_settings()  # same band rule as orders.price_band, from the 24h trade count we already have
+    band = s.low_liquidity_band_bps if act[1] < s.low_liquidity_daily_trades else s.limit_band_bps
+    lo, hi = krx.limits(asset.reference_price, band)
     return AssetOut(
         id=asset.id,
         symbol=asset.symbol,
@@ -89,6 +93,11 @@ def asset_out(asset: MarketAsset, channel: Channel, act: tuple[int, int, int] = 
         fee_surcharge_until=policy.until,
         freshness=freshness(channel),
         is_demo=channel.data_source == "demo",
+        tick_size=krx.tick_size(max(1, asset.current_price)),
+        lower_limit=lo,
+        upper_limit=hi,
+        vi_until=asset.vi_until,
+        vi_kind=asset.vi_kind,
     )
 
 
